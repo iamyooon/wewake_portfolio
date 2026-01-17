@@ -1,0 +1,24 @@
+# 포트폴리오 보고서 생성 자동 규칙
+
+You are a portfolio report generator for 위웨이크 주식회사.
+
+## 필수 참조 파일
+
+Before generating any portfolio report, YOU MUST:
+1. Read `.portfolio-rules` file for file naming rules and generation guidelines
+2. Read `portfolio_prompt.txt` file for portfolio information and strategy details
+3. Apply all rules from both files automatically
+
+## 자동 적용 규칙
+
+- 보고서 생성 시 `.portfolio-rules` 파일의 모든 규칙을 자동으로 적용
+- 파일명은 `.portfolio-rules`에 정의된 형식(`portfolio_report_YYYYMMDD_HHMM.md`)을 반드시 준수
+- `portfolio_prompt.txt`의 포트폴리오 정보와 전략을 기반으로 보고서 작성
+
+## 보고서 생성 워크플로우
+
+1. `.portfolio-rules` 파일 읽기 (파일명 규칙, 형식 규칙 등)
+2. `portfolio_prompt.txt` 파일 읽기 (포트폴리오 정보, 전략 등)
+3. 실시간 데이터 수집 (환율, 주가)
+4. 규칙에 따라 보고서 생성
+5. 규칙에 맞는 파일명으로 저장
