@@ -4,6 +4,8 @@
 **포트폴리오·프롬프트 관련 내용은 스크립트에 두지 않고 모두 이 폴더에서만 관리**합니다.  
 파일만 수정하면 다음 실행부터 적용됩니다. (스크립트 수정 불필요)
 
+**역할 분리:** 사용자별 **구체적·개인적 목표**(연도·금액·인출 계획·종목 등)는 **`portfolio_prompt.txt`에만** 두고, step1/2/3 시스템·유저 프롬프트는 **역할(role)·출력 형식·절차**만 정의합니다. 목표·숫자는 "포트폴리오에 명시된 …"처럼 참조만 하면 수정 시 한 곳만 바꾸면 됩니다.
+
 ---
 
 ## 0. 설정 (config.json)
@@ -28,6 +30,7 @@
 
 - **기본 파일명:** `config.json`에 없으면 `portfolio_prompt.txt`를 사용합니다.
 - **인코딩:** UTF-8
+- **구체적 목표(연도·금액·마일스톤 등)는 이 파일에만 두세요.** step1/2/3 템플릿에는 목표 숫자를 적지 말고, "포트폴리오에 명시된 목표"처럼만 참조하면 수정 시 한 곳만 바꾸면 됩니다.
 
 ---
 
@@ -50,9 +53,9 @@ step1/2/3 시스템 프롬프트 MD 파일이 없을 때 사용하는 **폴백**
 
 | 파일 | 용도 |
 |------|------|
-| **`step1_grok_system.md`** | **Grok** — 데이터 분석관. 전 종목 테이블화, 실시간 환율·종가 반영, Alpha CAGR 예측. 출력 하단 JSON(`alpha_cagr`, `current_total_krw`, `market_data`) 포함 지시. |
-| **`step2_gemini_system.md`** | **Gemini** — 리스크 감사관. Grok 초안·Alpha 검토, Beta CAGR 산출(보수적). 출력 하단 JSON(`beta_cagr`, `risk_level`, `audit_notes`) 포함 지시. |
-| **`step3_openai_system.md`** | **OpenAI** — 수석 포트폴리오 매니저. Alpha·Beta 대조 후 최종 CAGR 확정, 전 종목 포함, 복리 저해 효과 경고. HTML 금지, 등락 기호·볼드만 사용. |
+| **`step1_grok_system.md`** | **Grok** — 데이터 분석관. 전 종목 테이블화, 실시간 환율·종가 반영, **Base 시나리오** CAGR 예측. 출력 하단 JSON(`alpha_cagr`, `current_total_krw`, `market_data`) 포함 지시. |
+| **`step2_gemini_system.md`** | **Gemini** — 리스크 감사관. Grok 초안 참고, **동일 Base 시나리오** 기준 독립 CAGR 산출. 출력 하단 JSON(`beta_cagr`, `risk_level`, `audit_notes`) 포함 지시. |
+| **`step3_openai_system.md`** | **OpenAI** — 수석 매니저. 세 Base CAGR 비교 후 **Bear/Bull 반영**해 최종 CAGR 확정, 전 종목 포함, 복리 저해 효과 경고. HTML 금지, 등락 기호·볼드만 사용. |
 
 ---
 
@@ -64,7 +67,7 @@ step1/2/3 시스템 프롬프트 MD 파일이 없을 때 사용하는 **폴백**
 |------|------|--------|
 | **`step1_user_template.md`** | Grok에 넘길 유저 메시지 | `{{date_str}}`, `{{yesterday_str}}`, `{{realtime_data}}`, `{{portfolio_prompt_content}}` |
 | **`step2_user_template.md`** | Gemini에 넘길 유저 메시지 | `{{alpha_cagr}}`, `{{draft_report}}`, `{{portfolio_prompt_content}}` (앞 2000자) |
-| **`step3_user_template.md`** | OpenAI에 넘길 유저 메시지 | `{{alpha_cagr}}`, `{{beta_cagr}}`, `{{grok_draft}}`, `{{gemini_audit_text}}`, `{{portfolio_prompt_content}}` |
+| **`step3_user_template.md`** | OpenAI에 넘길 유저 메시지 | `{{alpha_cagr}}`(Grok Base), `{{beta_cagr}}`(Gemini Base), `{{grok_draft}}`, `{{gemini_audit_text}}`, `{{portfolio_prompt_content}}` |
 
 - **`{{portfolio_prompt_content}}`** → 위 `portfolio_prompt.txt` 내용이 주입됩니다.
 - **인코딩:** UTF-8. MD만 편집하면 다음 실행부터 적용됩니다.
