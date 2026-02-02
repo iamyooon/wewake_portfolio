@@ -46,3 +46,8 @@
 
 - `portfolio_prompt.txt`: 포트폴리오 운영 프롬프트 (포트폴리오 정보, 전략 등)
 - 이 파일 (`.portfolio-rules`): 보고서 생성 메타 규칙 (파일명, 형식 등)
+
+## 지라(Jira)
+
+- wewake_portfolio 관련 이슈 번호: **WEB-298**
+- 커밋/작업 코멘트는 WEB-298에 등록 (english-write-study-app-main/scripts/git/jira.mjs 활용 시 `--issue WEB-298`)

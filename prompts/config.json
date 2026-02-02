@@ -1,0 +1,4 @@
+{
+  "portfolio_prompt_file": "portfolio_prompt.txt",
+  "us_tickers": ["TSLA", "MAGS", "SMH", "MSTR", "MELI", "NU"]
+}
