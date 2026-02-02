@@ -24,13 +24,13 @@ git add -A
 git commit -F commit-message.txt
 ```
 
-## Git Hook (pre-commit)
-
-커밋 전에 스테이징된 Python 파일 문법 검사가 자동으로 실행되도록 하려면:
+## Git Hook (pre-commit / post-commit)
 
 ```powershell
 .\scripts\git\install-git-hooks.ps1
 ```
 
-설치 후 `git commit` 할 때마다 `scripts/git/pre-commit.ps1` 이 실행됩니다.  
+- **pre-commit**: 커밋 전 스테이징된 `.py` 문법 검사.
+- **post-commit**: 커밋 후 Jira 이슈에 코멘트 자동 추가. (Node.js 필요, `.env`에 `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `DEFAULT_ISSUE_KEY` 설정. 다른 프로젝트 `.env`에서 키 복사 후 이슈 번호만 `DEFAULT_ISSUE_KEY`로 지정하면 됨.)
+
 자세한 내용은 `scripts/git/README.md` 를 참고하세요.
