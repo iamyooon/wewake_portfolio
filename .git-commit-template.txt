@@ -1,0 +1,3 @@
+# 커밋 메시지 템플릿
+# 위 # 줄은 삭제하고 첫 줄에 제목, 빈 줄 뒤 본문 작성 후 저장
+# 커밋: git commit -F .git-commit-template.txt  또는  .\commit.ps1
