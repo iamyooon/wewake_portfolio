@@ -90,6 +90,27 @@ if (Test-Path $pythonScript) {
             Write-Host "`nFailed (exit code: $exitCode). See log for details." -ForegroundColor Red
             exit $exitCode
         }
+
+        # Post final report to Jira (WWI-59 by default)
+        $jiraReportIssue = if ($env:JIRA_REPORT_ISSUE_KEY) { $env:JIRA_REPORT_ISSUE_KEY } else { "WWI-59" }
+        $reportDir = Join-Path $ProjectPath "report"
+        $latestReport = Get-ChildItem (Join-Path $reportDir "portfolio_report_*.md") -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($latestReport) {
+            $relativeReportPath = "report\" + $latestReport.Name
+            $jiraScript = Join-Path $ProjectPath "scripts\git\jira.mjs"
+            if (Test-Path $jiraScript) {
+                try {
+                    & node $jiraScript summary --file $relativeReportPath --issue $jiraReportIssue 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "Jira comment posted: $jiraReportIssue" -ForegroundColor Gray
+                    } else {
+                        Write-Host "Jira post skipped (check JIRA_* in .env)." -ForegroundColor Gray
+                    }
+                } catch {
+                    Write-Host "Jira post skipped: $($_.Exception.Message)" -ForegroundColor Gray
+                }
+            }
+        }
     } else {
         Write-Host "Error: Python not found." -ForegroundColor Red
         Write-Host "Install from https://www.python.org/downloads/ (check Add to PATH)." -ForegroundColor Yellow
