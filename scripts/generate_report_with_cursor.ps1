@@ -1,5 +1,6 @@
 # 포트폴리오 보고서 자동 생성 PowerShell 스크립트
 # 매일 아침 8시에 실행되도록 Windows Task Scheduler에 등록
+# 3-AI(Grok + Gemini + OpenAI) 스크립트만 실행
 
 param(
     [string]$ProjectPath = "C:\Users\iamyo\wewake_portfolio"
@@ -23,52 +24,13 @@ if (Test-Path $envFile) {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "포트폴리오 보고서 자동 생성" -ForegroundColor Cyan
+Write-Host "포트폴리오 보고서 자동 생성 (3-AI)" -ForegroundColor Cyan
 Write-Host "실행 시간: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# 모델 선택 (openai, gemini, collaborative, 또는 openai_grok)
-$model = $env:PORTFOLIO_MODEL
-if (-not $model) {
-    # .env 파일에서 확인
-    $envFile = Join-Path $ProjectPath ".env"
-    if (Test-Path $envFile) {
-        $envContent = Get-Content $envFile -Raw
-        # OpenAI와 Grok 키가 모두 있으면 OpenAI+Grok 협업 모드 (우선순위 1)
-        if ($envContent -match "OPENAI_API_KEY=" -and $envContent -match "GROK_API_KEY=") {
-            $model = "openai_grok"  # OpenAI + Grok 협업 모드
-        }
-        # Gemini와 Grok 키가 모두 있으면 Gemini+Grok 협업 모드 (우선순위 2)
-        elseif ($envContent -match "GEMINI_API_KEY=" -and $envContent -match "GROK_API_KEY=") {
-            $model = "collaborative"  # Gemini + Grok 협업 모드
-        }
-        # Gemini만 있으면 Gemini 단독 모드
-        elseif ($envContent -match "GEMINI_API_KEY=") {
-            $model = "gemini"  # Gemini만 사용
-        }
-        # OpenAI만 있으면 OpenAI 단독 모드
-        elseif ($envContent -match "OPENAI_API_KEY=") {
-            $model = "openai"  # OpenAI 사용
-        } else {
-            $model = "openai"  # 기본값: OpenAI
-        }
-    } else {
-        $model = "openai"  # 기본값: OpenAI
-    }
-}
-
-# Python 스크립트 선택
-if ($model -eq "openai_grok") {
-    $pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_openai_grok.py"
-} elseif ($model -eq "collaborative") {
-    $pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_collaborative.py"
-} elseif ($model -eq "gemini") {
-    $pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_gemini.py"
-} else {
-    $pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_openai.py"
-}
-
-Write-Host "사용 모델: $model" -ForegroundColor Cyan
+# 3-AI 스크립트만 실행 (Grok + Gemini + OpenAI, 2라운드 협상 후 GPT 최종)
+$pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_3ai.py"
+Write-Host "사용 스크립트: generate_portfolio_report_3ai.py (3-AI)" -ForegroundColor Cyan
 
 if (Test-Path $pythonScript) {
     Write-Host "`nPython 스크립트 실행 중..." -ForegroundColor Yellow
