@@ -1,12 +1,18 @@
 # 포트폴리오 보고서 자동 생성 PowerShell 스크립트
 # 매일 아침 8시에 실행되도록 Windows Task Scheduler에 등록
 # 3-AI(Grok + Gemini + OpenAI) 스크립트만 실행
+# 콘솔에는 영어만 출력 (한글 깨짐 방지). 상세 한글 로그는 report\daily_*.log (UTF-8) 참고.
 
 param(
     [string]$ProjectPath = "C:\Users\iamyo\wewake_portfolio"
 )
 
 $ErrorActionPreference = "Stop"
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$env:PYTHONIOENCODING = "utf-8"
 
 # 프로젝트 디렉토리로 이동
 Set-Location $ProjectPath
@@ -24,16 +30,16 @@ if (Test-Path $envFile) {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "포트폴리오 보고서 자동 생성 (3-AI)" -ForegroundColor Cyan
-Write-Host "실행 시간: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
+Write-Host "Portfolio Report Auto-Generation (3-AI)" -ForegroundColor Cyan
+Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # 3-AI 스크립트만 실행 (Grok + Gemini + OpenAI, 2라운드 협상 후 GPT 최종)
 $pythonScript = Join-Path $ProjectPath "scripts\generate_portfolio_report_3ai.py"
-Write-Host "사용 스크립트: generate_portfolio_report_3ai.py (3-AI)" -ForegroundColor Cyan
+Write-Host "Script: generate_portfolio_report_3ai.py (3-AI)" -ForegroundColor Cyan
 
 if (Test-Path $pythonScript) {
-    Write-Host "`nPython 스크립트 실행 중..." -ForegroundColor Yellow
+    Write-Host "`nRunning Python script..." -ForegroundColor Yellow
     
     # Python 경로 확인 (여러 방법 시도)
     $python = $null
@@ -62,7 +68,7 @@ if (Test-Path $pythonScript) {
                 $pythonExe = Join-Path $dir.FullName "python.exe"
                 if (Test-Path $pythonExe) {
                     $python = @{Source = $pythonExe}
-                    Write-Host "Python 발견: $pythonExe" -ForegroundColor Green
+                    Write-Host "Python found: $pythonExe" -ForegroundColor Green
                     break
                 }
             }
@@ -71,24 +77,27 @@ if (Test-Path $pythonScript) {
     }
     
     if ($python) {
-        Write-Host "Python 실행: $($python.Source)" -ForegroundColor Green
-        & $python.Source $pythonScript
+        Write-Host "Python: $($python.Source)" -ForegroundColor Green
+        # Save full output to UTF-8 log file (Korean OK). Do not echo to console to avoid garbled text.
+        $logDir = Join-Path $ProjectPath "report"
+        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+        $logFile = Join-Path $logDir ("daily_$(Get-Date -Format 'yyyyMMdd_HHmmss').log")
+        $scriptOutput = & $python.Source $pythonScript 2>&1
+        $scriptOutput | Out-File -FilePath $logFile -Encoding utf8
+        Write-Host "Output saved to log (UTF-8): $logFile" -ForegroundColor Gray
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
-            Write-Host "`n❌ 스크립트 실행 실패 (종료 코드: $exitCode)" -ForegroundColor Red
+            Write-Host "`nFailed (exit code: $exitCode). See log for details." -ForegroundColor Red
             exit $exitCode
         }
     } else {
-        Write-Host "❌ 오류: Python을 찾을 수 없습니다." -ForegroundColor Red
-        Write-Host "`nPython 설치 방법:" -ForegroundColor Yellow
-        Write-Host "1. https://www.python.org/downloads/ 에서 Python 다운로드" -ForegroundColor White
-        Write-Host "2. 설치 시 'Add Python to PATH' 옵션 체크" -ForegroundColor White
-        Write-Host "3. 또는 Microsoft Store에서 'Python' 검색하여 설치" -ForegroundColor White
+        Write-Host "Error: Python not found." -ForegroundColor Red
+        Write-Host "Install from https://www.python.org/downloads/ (check Add to PATH)." -ForegroundColor Yellow
         exit 1
     }
 } else {
-    Write-Host "❌ 오류: Python 스크립트를 찾을 수 없습니다: $pythonScript" -ForegroundColor Red
+    Write-Host "Error: Script not found: $pythonScript" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "`n✅ 스크립트 실행 완료" -ForegroundColor Green
+Write-Host "`nDone." -ForegroundColor Green
