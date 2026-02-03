@@ -18,7 +18,7 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 
 const ROOT = process.cwd();
-const DEFAULT_ISSUE = process.env.DEFAULT_ISSUE_KEY || process.env.JIRA_PROJECT_KEY || 'WEB-295';
+const DEFAULT_ISSUE = process.env.DEFAULT_ISSUE_KEY || process.env.JIRA_PROJECT_KEY || 'WEB-298';
 
 function loadEnv() {
   for (const file of ['.env.local', '.env']) {
