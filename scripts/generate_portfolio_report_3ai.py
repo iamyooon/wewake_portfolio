@@ -25,6 +25,7 @@
 import os
 import sys
 import argparse
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
@@ -57,6 +58,85 @@ PROMPTS_DIR = PROJECT_ROOT / "prompts"
 CONFIG_FILE = PROMPTS_DIR / "config.json"
 FALLBACK_FILES = {"grok": "fallback_grok_system.md", "gemini": "fallback_gemini_system.md", "openai": "fallback_openai_system.md"}
 
+# API 비용 추적 (1M tokens당 USD. docs/모델_가격_비교.md 참고)
+API_USAGE_LOG = []
+
+def _estimate_tokens(text):
+    """대략적 토큰 수 (문자 수/4, 최소 1)."""
+    if not text:
+        return 0
+    return max(1, len(str(text)) // 4)
+
+def _log_usage(provider, model, input_tokens, output_tokens):
+    """호출당 사용량 기록. 비용 계산용."""
+    API_USAGE_LOG.append({
+        "provider": provider,
+        "model": model or "unknown",
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+    })
+
+# 1M tokens당 USD (입력, 출력). 알 수 없는 모델은 openai 5.2 수준으로 추정
+PRICE_PER_1M = {
+    "openai": {
+        "gpt-5.2": (1.75, 14.0), "gpt-5.2-2025-12-11": (1.75, 14.0),
+        "gpt-5.2-pro": (21.0, 168.0), "gpt-5.2-pro-2025-12-11": (21.0, 168.0),
+        "gpt-4o": (2.5, 10.0), "gpt-4-turbo": (10.0, 30.0), "gpt-4": (30.0, 60.0), "gpt-3.5-turbo": (0.5, 1.5),
+    },
+    "grok": {
+        "grok-4-1-fast-reasoning": (0.20, 0.50), "grok-4-1-fast": (0.20, 0.50), "grok-4-1-fast-non-reasoning": (0.20, 0.50),
+        "grok-4-fast-reasoning": (0.20, 0.50), "grok-4-fast": (0.20, 0.50), "grok-4-fast-non-reasoning": (0.20, 0.50),
+        "grok-3": (3.0, 15.0), "grok-3-mini": (0.5, 2.0),
+    },
+    "gemini": {
+        "gemini-3-flash-preview": (0.50, 3.0), "gemini-3-flash": (0.50, 3.0),
+        "gemini-2.5-flash": (0.30, 2.5), "gemini-2.5-pro": (1.25, 10.0),
+        "gemini-3-pro-preview": (2.0, 12.0), "gemini-3-pro": (2.0, 12.0), "gemini-pro": (0.5, 1.5),
+    },
+}
+
+def _get_price(provider, model):
+    """(input_per_1M, output_per_1M) USD. 없으면 기본값."""
+    d = PRICE_PER_1M.get(provider, {})
+    if model in d:
+        return d[model]
+    if provider == "openai":
+        return (1.75, 14.0)
+    if provider == "grok":
+        return (0.20, 0.50)
+    if provider == "gemini":
+        return (0.50, 3.0)
+    return (1.0, 5.0)
+
+def compute_and_print_cost(usd_krw_rate=None):
+    """API_USAGE_LOG 기준으로 비용(USD·KRW) 계산 후 출력. usd_krw_rate 있으면 원화 환산 표시."""
+    if not API_USAGE_LOG:
+        return
+    total_usd = 0.0
+    lines = ["\n[API 비용 (추정)]"]
+    by_provider = {}
+    for u in API_USAGE_LOG:
+        provider = u["provider"]
+        model = u["model"]
+        inp, out = u["input_tokens"], u["output_tokens"]
+        price_in, price_out = _get_price(provider, model)
+        cost = (inp / 1_000_000) * price_in + (out / 1_000_000) * price_out
+        total_usd += cost
+        by_provider[provider] = by_provider.get(provider, 0) + cost
+    for prov, c in sorted(by_provider.items()):
+        lines.append(f"  {prov}: ${c:.4f}")
+    lines.append(f"  **합계: 약 ${total_usd:.4f} USD**")
+    if usd_krw_rate is not None and usd_krw_rate > 0:
+        total_krw = round(total_usd * usd_krw_rate)
+        lines.append(f"  **한국돈: 약 {total_krw:,}원** (환율 {usd_krw_rate}원/USD 기준)")
+    else:
+        rate = fetch_usd_krw_rate() if not usd_krw_rate else None
+        if rate and rate > 0:
+            total_krw = round(total_usd * rate)
+            lines.append(f"  **한국돈: 약 {total_krw:,}원** (환율 {rate}원/USD 기준)")
+    lines.append("  (토큰 수는 API 응답 또는 문자 수 기반 추정. 실제 청구와 다를 수 있음.)")
+    print("\n".join(lines))
+
 def load_prompts_config():
     """prompts/config.json을 읽는다. 없거나 실패 시 빈 dict."""
     try:
@@ -80,6 +160,18 @@ def get_us_tickers():
     cfg = load_prompts_config()
     tickers = cfg.get("us_tickers")
     return list(tickers) if isinstance(tickers, list) else []
+
+def get_portfolio_holdings():
+    """prompts/config.json의 portfolio_holdings 반환. 없으면 None."""
+    cfg = load_prompts_config()
+    h = cfg.get("portfolio_holdings")
+    if not h or not isinstance(h, dict):
+        return None
+    cash = h.get("cash_krw")
+    positions = h.get("positions")
+    if positions is None or not isinstance(positions, list):
+        return None
+    return {"cash_krw": int(cash) if cash is not None else 0, "positions": positions}
 
 def get_stock_price_test_prompt():
     """주가 실시간 조회 테스트용 프롬프트 (config 또는 prompts/stock_price_test_prompt.txt)."""
@@ -227,6 +319,109 @@ def fetch_us_stock_prices(tickers):
         print(f"[WARNING] 미국 주가 조회 실패: {str(e)}")
         return {}
 
+def _best_usd_price(prices):
+    """미국 주가 dict에서 애프터 > 정규 > 프리 순으로 단일 가격(USD) 반환."""
+    if not prices:
+        return None
+    for key in ("post", "regular", "pre"):
+        if key in prices and prices[key] is not None:
+            return float(prices[key])
+    return None
+
+def fetch_kr_stock_prices(tickers):
+    """yfinance로 한국 주식/ETF 가격 조회. ticker -> KRW 가격(원) 반환. .KS/.KQ 지원."""
+    if not YFINANCE_AVAILABLE or not tickers:
+        return {}
+    result = {}
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose")
+            if price is not None:
+                result[ticker] = round(float(price), 0)
+        except Exception as e:
+            print(f"[WARNING] 한국 주가 {ticker} 조회 실패: {str(e)}")
+    return result
+
+def compute_portfolio_valuation(holdings, usd_krw_rate, us_stock_prices, kr_stock_prices):
+    """
+    보유 종목 + 환율 + 주가로 평가액(원) 계산.
+    반환: (rows, total_krw). rows는 [{"account", "name", "qty", "unit", "value_krw", "pct"}, ...]
+    """
+    if not holdings or not holdings.get("positions"):
+        return [], 0
+    cash_krw = int(holdings.get("cash_krw") or 0)
+    total_krw = cash_krw
+    rows = []
+
+    if cash_krw > 0:
+        rows.append({
+            "account": "법인 Active",
+            "name": "현금",
+            "qty": None,
+            "unit": "원",
+            "value_krw": cash_krw,
+            "pct": None,
+        })
+
+    for pos in holdings["positions"]:
+        account = pos.get("account") or ""
+        symbol = pos.get("symbol") or ""
+        name = pos.get("name") or symbol
+        qty = int(pos.get("qty") or 0)
+        currency = (pos.get("currency") or "USD").upper()
+        value_krw = 0
+        unit = ""
+
+        if currency == "USD":
+            price_usd = _best_usd_price(us_stock_prices.get(symbol)) if us_stock_prices else None
+            if price_usd is not None and usd_krw_rate:
+                value_krw = round(qty * price_usd * usd_krw_rate, 0)
+                unit = f"${price_usd:.2f}"
+            else:
+                unit = "(가격 조회 실패)"
+        else:
+            price_krw = kr_stock_prices.get(symbol) if kr_stock_prices else None
+            if price_krw is not None:
+                value_krw = qty * int(price_krw)
+                unit = f"{int(price_krw):,}원"
+            else:
+                unit = "(가격 조회 실패)"
+
+        total_krw += value_krw
+        rows.append({
+            "account": account,
+            "name": name,
+            "qty": qty,
+            "unit": unit,
+            "value_krw": value_krw,
+            "pct": None,
+        })
+
+    if total_krw > 0:
+        for r in rows:
+            if r["value_krw"] and r["value_krw"] > 0:
+                r["pct"] = round(100.0 * r["value_krw"] / total_krw, 2)
+
+    return rows, int(total_krw)
+
+def format_valuation_for_prompt(rows, total_krw):
+    """평가 행 목록과 총자산을 프롬프트용 마크다운 테이블 문자열로 반환."""
+    lines = [
+        "",
+        "| 계좌 | 종목 | 수량 | 단가/환산 | 평가액(원) | 비중(%) |",
+        "|------|------|------|----------|----------:|--------:|",
+    ]
+    for r in rows:
+        qty_s = str(r["qty"]) if r["qty"] is not None else "-"
+        val_s = f"{r['value_krw']:,}" if r["value_krw"] else "0"
+        pct_s = f"{r['pct']}%" if r["pct"] is not None else "-"
+        lines.append(f"| {r['account']} | {r['name']} | {qty_s} | {r['unit']} | {val_s} | {pct_s} |")
+    lines.append("")
+    lines.append(f"**총자산(API·스크립트 계산): {total_krw:,}원 (약 {total_krw/100_000_000:.2f}억)**")
+    return "\n".join(lines)
+
 def load_env():
     """환경 변수 로드 (.env 파일에서)"""
     if ENV_FILE.exists():
@@ -316,8 +511,8 @@ def generate_report_filename(openai_model=None, grok_model=None, gemini_model=No
     filepath = REPORTS_DIR / filename
     return filename, filepath
 
-def create_initial_prompt(portfolio_prompt_content, usd_krw_rate=None, us_stock_prices=None):
-    """초기 프롬프트를 생성합니다. 환율·미국주가를 주입합니다."""
+def create_initial_prompt(portfolio_prompt_content, usd_krw_rate=None, us_stock_prices=None, computed_valuation_text=None):
+    """초기 프롬프트를 생성합니다. 환율·미국주가·(선택) API 계산 평가액을 주입합니다."""
     today = datetime.now()
     yesterday = today - timedelta(days=1)
     date_str = today.strftime("%Y년 %m월 %d일")
@@ -347,7 +542,12 @@ def create_initial_prompt(portfolio_prompt_content, usd_krw_rate=None, us_stock_
     else:
         realtime_data += "**미국 주식 가격**: 조회 실패 → 웹 검색으로 찾으세요.\n\n"
     
-    realtime_data += f"**한국 주식 종가** (SK하이닉스, 삼성전자, 풍산, 파마리서치): 웹 검색으로 {yesterday_iso} 종가를 찾으세요.\n"
+    if computed_valuation_text:
+        realtime_data += "**포트폴리오 평가 (API·스크립트 계산 — 이 표와 총자산을 그대로 사용할 것, 별도 검색/재계산 금지)**\n"
+        realtime_data += computed_valuation_text
+        realtime_data += "\n"
+    else:
+        realtime_data += f"**한국 주식 종가** (SK하이닉스, 삼성전자, 파마리서치 등): 웹 검색으로 {yesterday_iso} 종가를 찾으세요.\n"
     
     tpl = load_user_template("grok")
     if tpl:
@@ -496,6 +696,7 @@ def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
         if model_name in OPENAI_RESPONSES_API_MODELS:
             text, status_or_name, err = _openai_responses_api(api_key, prompt, model_name, instructions=instructions)
             if text is not None:
+                _log_usage("openai", model_name, _estimate_tokens(instructions) + _estimate_tokens(prompt), _estimate_tokens(text))
                 if model_name != models_to_try[0]:
                     print(f"   Fallback 모델 사용: {model_name}")
                 return text, model_name
@@ -517,9 +718,14 @@ def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
                 if response.status_code == 200:
                     result = response.json()
                     if result.get('choices') and len(result['choices']) > 0:
+                        content = result['choices'][0]['message']['content']
+                        usage = result.get('usage') or {}
+                        _log_usage("openai", model_name,
+                            usage.get('prompt_tokens') or _estimate_tokens(instructions) + _estimate_tokens(prompt),
+                            usage.get('completion_tokens') or _estimate_tokens(content))
                         if model_name != models_to_try[0]:
                             print(f"   Fallback 모델 사용: {model_name}")
-                        return result['choices'][0]['message']['content'], model_name
+                        return content, model_name
                 elif response.status_code == 404:
                     print(f"   [404] 요청 URL: {url}")
                     print(f"   [404] 응답 본문: {response.text}")
@@ -651,8 +857,10 @@ def _grok_responses_api_with_web_search(api_key, prompt, preferred_model=None, s
                 if item.get("type") == "message" and item.get("role") == "assistant":
                     for c in (item.get("content") or []):
                         if c.get("type") == "output_text" and c.get("text"):
+                            text = c["text"]
+                            _log_usage("grok", model_name, _estimate_tokens(system_text) + _estimate_tokens(prompt), _estimate_tokens(text))
                             print(f"   Grok 모델 사용 (web_search): {model_name}")
-                            return c["text"], model_name
+                            return text, model_name
             break
         except requests.exceptions.RequestException:
             continue
@@ -701,8 +909,13 @@ def call_grok_api(api_key, prompt, preferred_model=None, use_web_search=True, sy
                 if response.status_code == 200:
                     result = response.json()
                     if 'choices' in result and len(result['choices']) > 0:
+                        content = result['choices'][0]['message']['content']
+                        usage = result.get('usage') or {}
+                        inp = usage.get('prompt_tokens') or usage.get('input_tokens')
+                        out = usage.get('completion_tokens') or usage.get('output_tokens')
+                        _log_usage("grok", model_name, inp or _estimate_tokens(system_text) + _estimate_tokens(prompt), out or _estimate_tokens(content))
                         print(f"   Grok 모델 사용: {model_name}")
-                        return result['choices'][0]['message']['content'], model_name
+                        return content, model_name
                 elif response.status_code == 404:
                     break
                 elif response.status_code == 403:
@@ -768,6 +981,10 @@ def call_gemini_api(api_key, prompt, preferred_model=None, system_content=None):
                     result = response.json()
                     if 'candidates' in result and len(result['candidates']) > 0:
                         content = result['candidates'][0]['content']['parts'][0]['text']
+                        um = result.get('usageMetadata') or {}
+                        inp = um.get('promptTokenCount') or um.get('inputTokenCount')
+                        out = um.get('candidatesTokenCount') or um.get('outputTokenCount')
+                        _log_usage("gemini", model_name, inp or _estimate_tokens(prompt), out or _estimate_tokens(content))
                         print(f"   Gemini 모델 사용: {model_name}")
                         return content, model_name
                 elif response.status_code == 400:
@@ -848,7 +1065,7 @@ def create_gemini_r2_prompt(grok_r2_response):
 """
 
 def create_final_prompt(grok_draft, alpha_cagr, gemini_audit_text, beta_cagr, portfolio_prompt_content, grok_r2=None, gemini_r2=None):
-    """OpenAI(수석 매니저) 전용: 세 Base CAGR 비교 + 2라운드 합의·대립 + Bear/Bull 반영 후 최종 CAGR 확정."""
+    """OpenAI(수석 매니저) 전용: 세 Base CAGR 비교 + 2라운드 합의·대립 + Bear/Bull 반영 후 최종 CAGR 확정. 비용 절감: portfolio는 앞 3000자만 전달."""
     alpha_str = f"{alpha_cagr}%" if alpha_cagr is not None else "(미제시)"
     beta_str = f"{beta_cagr}%" if beta_cagr is not None else "(미제시)"
     grok_r2_text = (grok_r2 or "").strip()
@@ -857,11 +1074,12 @@ def create_final_prompt(grok_draft, alpha_cagr, gemini_audit_text, beta_cagr, po
         grok_r2_text = "(없음)"
     if not gemini_r2_text:
         gemini_r2_text = "(없음)"
+    portfolio_3000 = (portfolio_prompt_content or "")[:3000]
     tpl = load_user_template("openai")
     if tpl:
         out = tpl.replace("{{alpha_cagr}}", alpha_str).replace("{{beta_cagr}}", beta_str)
         out = out.replace("{{grok_draft}}", grok_draft).replace("{{gemini_audit_text}}", gemini_audit_text)
-        out = out.replace("{{portfolio_prompt_content}}", portfolio_prompt_content or "")
+        out = out.replace("{{portfolio_prompt_content}}", portfolio_3000)
         out = out.replace("{{grok_r2_response}}", grok_r2_text).replace("{{gemini_r2_response}}", gemini_r2_text)
         return out
     return f"""[Step 3 - 수석 매니저용] Grok Base({alpha_str})·Gemini Base({beta_str})와 자신의 Base 예측을 비교한 뒤 Bear/Bull 반영해 최종 CAGR 확정. 전 종목 포함, 복리 저해 효과 경고.
@@ -874,7 +1092,7 @@ def create_final_prompt(grok_draft, alpha_cagr, gemini_audit_text, beta_cagr, po
 
 **2라운드 Gemini 수용·반박**: {gemini_r2_text or '(없음)'}
 
-**포트폴리오 참고**: {portfolio_prompt_content or ""}
+**포트폴리오 참고**: {portfolio_3000}
 """
 
 def format_elapsed(seconds):
@@ -1200,30 +1418,105 @@ def run_list_models(openai_key, grok_key, gemini_key):
     print("=" * 50)
     return 0
 
-def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args):
+def _write_debug_report(draft_report, final_report, usd_krw_rate, us_stock_prices, alpha_cagr, beta_cagr,
+        grok_model, gemini_model, openai_model_final, initial_prompt, audit_prompt, grok_r2_prompt, gemini_r2_prompt, final_prompt,
+        grok_system, gemini_system, openai_system, grok_r2_sys, gemini_r2_sys, audit_comments, grok_r2, gemini_r2, args):
+    """--debug-step 종료 시 보고서를 main()과 동일 형식으로 report/ 에 저장. 저장한 report_path 반환."""
+    if not draft_report:
+        return None
+    body = final_report if final_report else draft_report
+    report_filename, report_path = generate_report_filename(
+        openai_model_final or "debug", grok_model, gemini_model, output_file=args.output_file
+    )
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("# 위웨이크 주식회사 포트폴리오 보고서 (3-AI 협업)\n")
+        f.write(f"**작성일: {now.strftime('%Y년 %m월 %d일 %H시 %M분')} (어제 종가 기준: {yesterday.strftime('%Y년 %m월 %d일')})**\n\n")
+        f.write("**실시간 데이터:**\n")
+        if usd_krw_rate:
+            f.write(f"- USD/KRW 환율: {usd_krw_rate}원 ({yesterday.strftime('%Y-%m-%d')} API 조회)\n")
+        if us_stock_prices:
+            f.write(f"- 미국 주가: {', '.join(us_stock_prices.keys())} ({yesterday.strftime('%Y-%m-%d')} API 조회)\n")
+        f.write(f"\n**성장률:** Base(Grok) {alpha_cagr or 'N/A'}% | Base(Gemini) {beta_cagr or 'N/A'}% → GPT 세 Base 비교 후 Bear/Bull 반영해 최종 확정\n")
+        f.write(f"\n**사용 모델:**\n")
+        f.write(f"- Grok (1차 예측·초안): `{grok_model or 'N/A'}`\n")
+        f.write(f"- Gemini (2차 예측·감사): `{gemini_model or 'N/A'}`\n")
+        f.write(f"- OpenAI (최종 결정): `{openai_model_final or 'N/A'}`\n\n")
+        f.write("---\n\n")
+        f.write("## 최종 보고서\n\n")
+        f.write(body)
+    # 중간 데이터 디렉터리 (main과 동일)
+    parts = report_path.stem.split("_")
+    date_time_dirname = f"{parts[2]}_{parts[3]}" if len(parts) >= 4 else now.strftime("%Y%m%d_%H%M")
+    intermediate_dir = REPORTS_DIR / date_time_dirname
+    intermediate_dir.mkdir(parents=True, exist_ok=True)
+    (intermediate_dir / "step1_grok.md").write_text(
+        "## 시스템 프롬프트\n\n" + (grok_system or "") + "\n\n---\n\n## 유저 프롬프트\n\n" + (initial_prompt or "") + "\n\n---\n\n## 출력\n\n" + (draft_report or ""),
+        encoding="utf-8",
+    )
+    (intermediate_dir / "step2_gemini.md").write_text(
+        "## 시스템 프롬프트\n\n" + (gemini_system or "") + "\n\n---\n\n## 유저 프롬프트\n\n" + (audit_prompt or "") + "\n\n---\n\n## 출력\n\n" + (audit_comments or ""),
+        encoding="utf-8",
+    )
+    if grok_r2 and grok_r2_sys:
+        (intermediate_dir / "step2b_grok.md").write_text(
+            "## 시스템 프롬프트\n\n" + grok_r2_sys + "\n\n---\n\n## 유저 프롬프트\n\n" + (grok_r2_prompt or "") + "\n\n---\n\n## 출력\n\n" + grok_r2,
+            encoding="utf-8",
+        )
+    if gemini_r2 and gemini_r2_sys:
+        (intermediate_dir / "step2b_gemini.md").write_text(
+            "## 시스템 프롬프트\n\n" + gemini_r2_sys + "\n\n---\n\n## 유저 프롬프트\n\n" + (gemini_r2_prompt or "") + "\n\n---\n\n## 출력\n\n" + gemini_r2,
+            encoding="utf-8",
+        )
+    if final_prompt and openai_system:
+        (intermediate_dir / "step3_openai.md").write_text(
+            "## 시스템 프롬프트\n\n" + openai_system + "\n\n---\n\n## 유저 프롬프트\n\n" + final_prompt + "\n\n---\n\n## 출력\n\n" + (body or ""),
+            encoding="utf-8",
+        )
+    print(f"[디버그] 보고서 저장 완료: report/{report_filename}, 중간: report/{date_time_dirname}/")
+    return report_path
+
+def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text=None):
     """--debug-step N: 1=Grok R1, 2=+Gemini R1, 3=+Grok R2, 4=+Gemini R2, 5=+OpenAI. 'next'/'다음' 입력 시 다음 단계로 진행."""
     max_step = 5
     target_step = args.debug_step
     print(f"\n[디버그] Step {target_step}/{max_step}까지 실행 후 대화. 다음 단계로: next 또는 다음. 종료: quit 또는 exit 입력\n")
 
-    # 상태 누적 (다음 단계 진행용)
+    # 상태 누적 (다음 단계 진행용, 보고서 저장에 사용)
     draft_report = None
     alpha_cagr = None
     audit_comments = ""
     beta_cagr = None
     grok_r2 = ""
     gemini_r2 = ""
+    grok_model = None
+    gemini_model = None
+    openai_model_final = None
+    final_report = None
+    initial_prompt = None
+    audit_prompt = None
+    grok_r2_prompt = None
+    gemini_r2_prompt = None
+    final_prompt = None
+    grok_system = None
+    gemini_system = None
+    openai_system = None
+    grok_r2_sys = None
+    gemini_r2_sys = None
+    qa_log = []  # 디버그에서 사용자가 임의로 질문한 내용 + AI 응답 저장
 
     # Step 1
     grok_system = load_system_prompt("grok") or load_fallback_system("grok")
-    initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices)
+    initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices, computed_valuation_text)
     print("[Step 1] Grok R1 호출 중...")
     t_step = time.perf_counter()
     draft_result = call_grok_api(grok_key, initial_prompt, preferred_model=args.grok_model, use_web_search=not args.no_grok_web_search, system_content=grok_system)
     if not draft_result[0]:
         print("[ERROR] Step 1(Grok R1) 실패")
         return 1
-    draft_report, _ = draft_result
+    draft_report, grok_model = draft_result
     alpha_cagr, current_total_krw, market_data = parse_alpha_json(draft_report)
     print(f"[Step 1] 완료 ({len(draft_report)}자). (소요: {format_elapsed(time.perf_counter() - t_step)})\n---\n{draft_report}\n---")
     if alpha_cagr is not None:
@@ -1248,6 +1541,8 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
         t_step = time.perf_counter()
         audit_result = call_gemini_api(gemini_key, audit_prompt, preferred_model=args.gemini_model, system_content=gemini_system)
         audit_comments = audit_result[0] if audit_result and audit_result[0] else ""
+        if audit_result and len(audit_result) > 1:
+            gemini_model = audit_result[1]
         if not audit_comments:
             print("[ERROR] Step 2(Gemini R1) 실패")
             return 1
@@ -1269,8 +1564,9 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
         current_step = 2
 
     if target_step >= 3:
-        grok_r2_system = load_system_prompt("grok_r2") or load_fallback_system("grok")
+        grok_r2_sys = load_system_prompt("grok_r2") or load_fallback_system("grok")
         grok_r2_prompt = create_grok_r2_prompt(audit_comments)
+        grok_r2_system = grok_r2_sys
         print("[Step 3] Grok R2(수용·반박) 호출 중...")
         t_step = time.perf_counter()
         grok_r2_result = call_grok_api(grok_key, grok_r2_prompt, preferred_model=args.grok_model, use_web_search=False, system_content=grok_r2_system)
@@ -1288,8 +1584,9 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
         current_step = 3
 
     if target_step >= 4:
-        gemini_r2_system = load_system_prompt("gemini_r2") or load_fallback_system("gemini")
+        gemini_r2_sys = load_system_prompt("gemini_r2") or load_fallback_system("gemini")
         gemini_r2_prompt = create_gemini_r2_prompt(grok_r2)
+        gemini_r2_system = gemini_r2_sys
         print("[Step 4] Gemini R2(수용·반박) 호출 중...")
         t_step = time.perf_counter()
         gemini_r2_result = call_gemini_api(gemini_key, gemini_r2_prompt, preferred_model=args.gemini_model, system_content=gemini_r2_system)
@@ -1309,12 +1606,15 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
     if target_step >= 5:
         openai_system = load_system_prompt("openai") or load_fallback_system("openai")
         user_prompt = create_final_prompt(draft_report, alpha_cagr, audit_comments, beta_cagr, portfolio_prompt, grok_r2=grok_r2, gemini_r2=gemini_r2)
+        final_prompt = user_prompt
         print("[Step 5] OpenAI 호출 중...")
         t_step = time.perf_counter()
         content, model = call_openai_api(openai_key, user_prompt, preferred_model=args.openai_model, system_content=openai_system)
         if not content:
             print("[ERROR] Step 5(OpenAI) 실패")
             return 1
+        final_report = content
+        openai_model_final = model
         print(f"[Step 5] 완료 ({len(content)}자). 모델: {model}. (소요: {format_elapsed(time.perf_counter() - t_step)})\n---\n{content}\n---")
         messages = [
             {"role": "system", "content": openai_system or ""},
@@ -1345,6 +1645,8 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
                 t_step = time.perf_counter()
                 audit_result = call_gemini_api(gemini_key, audit_prompt, preferred_model=args.gemini_model, system_content=gemini_system)
                 audit_comments = audit_result[0] if audit_result and audit_result[0] else ""
+                if audit_result and len(audit_result) > 1:
+                    gemini_model = audit_result[1]
                 if not audit_comments:
                     print("[ERROR] Step 2 실패")
                     continue
@@ -1384,12 +1686,15 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
             elif next_step == 5:
                 openai_system = load_system_prompt("openai") or load_fallback_system("openai")
                 user_prompt = create_final_prompt(draft_report, alpha_cagr, audit_comments, beta_cagr, portfolio_prompt, grok_r2=grok_r2, gemini_r2=gemini_r2)
+                final_prompt = user_prompt
                 print("[Step 5] OpenAI 호출 중...")
                 t_step = time.perf_counter()
                 content, model = call_openai_api(openai_key, user_prompt, preferred_model=args.openai_model, system_content=openai_system)
                 if not content:
                     print("[ERROR] Step 5 실패")
                     continue
+                final_report = content
+                openai_model_final = model
                 print(f"[Step 5] 완료 ({len(content)}자). 모델: {model}. (소요: {format_elapsed(time.perf_counter() - t_step)})\n---\n{content}\n---")
                 messages = [{"role": "system", "content": openai_system or ""}, {"role": "user", "content": user_prompt}, {"role": "assistant", "content": content}]
                 chat_fn, chat_key, preferred = call_openai_chat, openai_key, args.openai_model
@@ -1405,12 +1710,55 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
             messages.pop()
             continue
         messages.append({"role": "assistant", "content": reply})
+        qa_log.append((line, reply))
         print(f"AI> {reply}\n")
+    # 디버그 모드 종료 시에도 보고서 파일 저장 (main 실행과 동일 형식)
+    report_path = _write_debug_report(draft_report, final_report, usd_krw_rate, us_stock_prices, alpha_cagr, beta_cagr,
+        grok_model, gemini_model, openai_model_final, initial_prompt, audit_prompt, grok_r2_prompt, gemini_r2_prompt, final_prompt,
+        grok_system, gemini_system, openai_system, grok_r2_sys, gemini_r2_sys, audit_comments, grok_r2, gemini_r2, args)
+    # 디버그에서 사용자가 임의로 질문한 내용 + AI 응답 저장
+    if qa_log:
+        if report_path and report_path.exists():
+            parts = report_path.stem.split("_")
+            date_time_dirname = f"{parts[2]}_{parts[3]}" if len(parts) >= 4 else datetime.now().strftime("%Y%m%d_%H%M")
+        else:
+            date_time_dirname = datetime.now().strftime("%Y%m%d_%H%M")
+        qa_dir = REPORTS_DIR / date_time_dirname
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        lines = ["# 디버그 대화 기록 (사용자 질문 + AI 응답)\n"]
+        for i, (user_msg, ai_reply) in enumerate(qa_log, 1):
+            lines.append(f"## {i}\n\n**You:** {user_msg}\n\n**AI:** {ai_reply}\n")
+        (qa_dir / "debug_qa.md").write_text("\n".join(lines), encoding="utf-8")
+        print(f"[디버그] 대화 기록 저장: report/{date_time_dirname}/debug_qa.md")
+    compute_and_print_cost(usd_krw_rate)
+    # 지라 저장 여부 묻기: next 또는 n 입력 시 WWI-59에 코멘트로 올림
+    if report_path and report_path.exists():
+        try:
+            prompt_jira = input("\n지라(WWI-59)에 보고서를 올릴까요? 올리려면 next 또는 n 입력: ").strip().lower()
+            if prompt_jira in ("next", "n"):
+                rel_path = "report" + os.sep + report_path.name
+                jira_issue = os.environ.get("JIRA_REPORT_ISSUE_KEY", "WWI-59")
+                jira_script = PROJECT_ROOT / "scripts" / "git" / "jira.mjs"
+                if jira_script.exists():
+                    ret = subprocess.run(
+                        ["node", "scripts/git/jira.mjs", "summary", "--file", rel_path, "--issue", jira_issue],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if ret.returncode == 0:
+                        print(f"[디버그] 지라 코멘트 추가 완료: {jira_issue}")
+                    else:
+                        print(f"[디버그] 지라 업로드 실패 (JIRA_* 환경 변수 확인): {ret.stderr or ret.stdout}")
+        except Exception as e:
+            print(f"[디버그] 지라 입력/실행 예외: {e}")
     return 0
 
 def main():
     """메인 함수"""
     args = parse_arguments()
+    API_USAGE_LOG.clear()
     if args.prompt_file is None:
         args.prompt_file = get_default_prompt_file()
     
@@ -1478,15 +1826,30 @@ def main():
         print("  미국 주가: 조회 실패 (AI가 검색으로 대체)")
     print(f"[3/8] 실시간 데이터 조회 완료. (소요: {format_elapsed(time.perf_counter() - t0)})")
     
+    # 포트폴리오 평가액 API·스크립트 계산 (config에 portfolio_holdings 있으면)
+    computed_valuation_text = None
+    holdings = get_portfolio_holdings()
+    if holdings and usd_krw_rate is not None:
+        kr_tickers = list({p["symbol"] for p in holdings["positions"] if (p.get("currency") or "USD").upper() == "KRW"})
+        kr_stock_prices = fetch_kr_stock_prices(kr_tickers) if kr_tickers and YFINANCE_AVAILABLE else {}
+        if kr_tickers:
+            print(f"  한국 주가: {len(kr_stock_prices)}/{len(kr_tickers)}개 조회")
+        rows, total_krw = compute_portfolio_valuation(holdings, usd_krw_rate, us_stock_prices, kr_stock_prices)
+        if total_krw > 0:
+            computed_valuation_text = format_valuation_for_prompt(rows, total_krw)
+            print(f"  포트폴리오 평가(스크립트): 총 {total_krw:,}원 (약 {total_krw/100_000_000:.2f}억)")
+    elif holdings:
+        print("  [참고] 환율 없어 포트폴리오 평가 계산 생략 (AI가 검색으로 대체)")
+    
     # --debug-step: 해당 스텝만 실행 후 추가 질문 대화 모드
     if args.debug_step is not None:
-        return run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args)
+        return run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text)
     
     # Step 1: Grok 1차 예측 (Base 시나리오 CAGR) + 초안 작성
     grok_system = load_system_prompt("grok") or load_fallback_system("grok")
     print("\n[4/8] Grok(데이터 분석관) 1차 예측·초안 작성 중 (Base 시나리오 CAGR, web_search)...")
     t0 = time.perf_counter()
-    initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices)
+    initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices, computed_valuation_text)
     draft_result = call_grok_api(grok_key, initial_prompt, preferred_model=args.grok_model, use_web_search=not args.no_grok_web_search, system_content=grok_system)
     
     if draft_result[0] is None:
@@ -1658,7 +2021,7 @@ def main():
     print(f"   Base CAGR(Grok): {alpha_cagr or 'N/A'}% | Base CAGR(Gemini): {beta_cagr or 'N/A'}%")
     print(f"   최종 보고서 크기: {len(final_report)} 문자")
     print(f"   감사 결과 크기: {len(audit_comments)} 문자")
-    
+    compute_and_print_cost(usd_krw_rate)
     return 0
 
 if __name__ == "__main__":

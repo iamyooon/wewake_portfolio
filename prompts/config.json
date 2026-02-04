@@ -1,4 +1,23 @@
 {
   "portfolio_prompt_file": "portfolio_prompt.txt",
-  "us_tickers": ["TSLA", "MAGS", "SMH", "MSTR", "MELI", "NU"]
+  "us_tickers": ["TSLA", "MAGS", "SMH", "MSTR", "MELI", "NU", "PLTR"],
+  "portfolio_holdings": {
+    "cash_krw": 133000000,
+    "positions": [
+      {"account": "법인 Active", "symbol": "TSLA", "qty": 819, "currency": "USD", "name": "TSLA"},
+      {"account": "법인 Active", "symbol": "MAGS", "qty": 827, "currency": "USD", "name": "MAGS"},
+      {"account": "법인 Active", "symbol": "SMH", "qty": 98, "currency": "USD", "name": "SMH"},
+      {"account": "법인 Active", "symbol": "MSTR", "qty": 365, "currency": "USD", "name": "MSTR"},
+      {"account": "법인 Active", "symbol": "MELI", "qty": 3, "currency": "USD", "name": "MELI"},
+      {"account": "법인 Active", "symbol": "NU", "qty": 305, "currency": "USD", "name": "NU"},
+      {"account": "법인 Active", "symbol": "000660.KS", "qty": 38, "currency": "KRW", "name": "SK하이닉스"},
+      {"account": "법인 Active", "symbol": "005930.KS", "qty": 84, "currency": "KRW", "name": "삼성전자"},
+      {"account": "법인 Active", "symbol": "214450.KQ", "qty": 21, "currency": "KRW", "name": "파마리서치"},
+      {"account": "개인 Legacy", "symbol": "TSLA", "qty": 99, "currency": "USD", "name": "TSLA"},
+      {"account": "개인 Legacy", "symbol": "PLTR", "qty": 10, "currency": "USD", "name": "PLTR"},
+      {"account": "개인 Legacy", "symbol": "360750.KS", "qty": 623, "currency": "KRW", "name": "TIGER 미국S&P500"},
+      {"account": "개인 Legacy", "symbol": "069500.KS", "qty": 15, "currency": "KRW", "name": "KODEX 200"},
+      {"account": "개인 Legacy", "symbol": "458730.KS", "qty": 35, "currency": "KRW", "name": "TIGER 미국배당"}
+    ]
+  }
 }
