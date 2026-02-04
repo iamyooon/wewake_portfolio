@@ -4,8 +4,8 @@
 포트폴리오 보고서 3-AI 협업 생성 스크립트 (Grok + Gemini + OpenAI)
 성장률 합의 프로세스: Grok·Gemini·GPT 각각 Base 시나리오 CAGR 예측 → GPT가 세 Base 비교 후 Bear/Bull 반영해 최종 확정
 1. 환율·미국주가 API 조회 (open.er-api.com 무료 → exchangerate.host 키 있으면 보조, yfinance)
-2. Grok: 데이터 분석관, Base 시나리오 CAGR 예측 + 초안 작성 (web_search)
-3. Gemini: 리스크 감사관, Base 시나리오 CAGR 예측 + 감사 (Google Search)
+2. Grok: 데이터 분석관, Base 시나리오 CAGR 예측 + 시장 해석·리스크 논의 (web_search)
+3. Gemini: 리스크 감사관, Base 시나리오 CAGR 예측 + 검토 논의 (Google Search)
 4. OpenAI: 수석 매니저, 세 Base 비교 후 Bear/Bull 반영해 최종 CAGR 확정 및 보고서 완성
 
 사용법:
@@ -563,7 +563,7 @@ def create_initial_prompt(portfolio_prompt_content, usd_krw_rate=None, us_stock_
 {portfolio_prompt_content}
 ---
 
-**보고서 초안 구조:** 1) 포트폴리오 운영 목표 2) 어제 기준 마켓 현황 3) 자산 현황표(전 종목) 4) 목표 달성 로드맵 점검 5) 정리 코멘트. **출력 하단에 JSON 포함:** {{"alpha_cagr": 0.0, "current_total_krw": 0, "market_data": {{...}}}}
+**출력 범위:** 자산 요약·시장 해석·CAGR 예측 및 근거(시장·리스크)만. 보고서 본문은 Step 5에서 작성. **출력 하단에 JSON 포함:** {{"alpha_cagr": 0.0, "current_total_krw": 0, "market_data": {{...}}}}
 """
 
 def parse_alpha_json(text):
@@ -1033,9 +1033,9 @@ def create_audit_prompt(draft_report, alpha_cagr, portfolio_prompt_content):
     tpl = load_user_template("gemini")
     if tpl:
         return tpl.replace("{{alpha_cagr}}", alpha_str).replace("{{draft_report}}", draft_report).replace("{{portfolio_prompt_content}}", portfolio_2000)
-    return f"""[Step 2 - 리스크 감사관용] Grok 초안과 Base CAGR({alpha_str}) 참고, 동일 Base 시나리오 기준으로 독립 CAGR 산출. 출력 하단 JSON: {{"beta_cagr": 0.0, "risk_level": "low/mid/high", "audit_notes": "..."}}
+    return f"""[Step 2 - 리스크 감사관용] Grok의 CAGR·시장해석·리스크 논의와 Base CAGR({alpha_str}) 참고, 동일 Base 시나리오 기준으로 독립 CAGR 산출. 출력 하단 JSON: {{"beta_cagr": 0.0, "risk_level": "low/mid/high", "audit_notes": "..."}}
 
-**Grok 초안**:
+**Grok CAGR·논의**:
 {draft_report}
 
 **포트폴리오 참고**: 
@@ -1084,9 +1084,9 @@ def create_final_prompt(grok_draft, alpha_cagr, gemini_audit_text, beta_cagr, po
         return out
     return f"""[Step 3 - 수석 매니저용] Grok Base({alpha_str})·Gemini Base({beta_str})와 자신의 Base 예측을 비교한 뒤 Bear/Bull 반영해 최종 CAGR 확정. 전 종목 포함, 복리 저해 효과 경고.
 
-**Grok 초안**: {grok_draft}
+**Grok CAGR·논의**: {grok_draft}
 
-**Gemini 감사**: {gemini_audit_text}
+**Gemini 검토 논의**: {gemini_audit_text}
 
 **2라운드 Grok 수용·반박**: {grok_r2_text or '(없음)'}
 
@@ -1441,8 +1441,8 @@ def _write_debug_report(draft_report, final_report, usd_krw_rate, us_stock_price
             f.write(f"- 미국 주가: {', '.join(us_stock_prices.keys())} ({yesterday.strftime('%Y-%m-%d')} API 조회)\n")
         f.write(f"\n**성장률:** Base(Grok) {alpha_cagr or 'N/A'}% | Base(Gemini) {beta_cagr or 'N/A'}% → GPT 세 Base 비교 후 Bear/Bull 반영해 최종 확정\n")
         f.write(f"\n**사용 모델:**\n")
-        f.write(f"- Grok (1차 예측·초안): `{grok_model or 'N/A'}`\n")
-        f.write(f"- Gemini (2차 예측·감사): `{gemini_model or 'N/A'}`\n")
+        f.write(f"- Grok (1차 예측·논의): `{grok_model or 'N/A'}`\n")
+        f.write(f"- Gemini (2차 예측·검토 논의): `{gemini_model or 'N/A'}`\n")
         f.write(f"- OpenAI (최종 결정): `{openai_model_final or 'N/A'}`\n\n")
         f.write("---\n\n")
         f.write("## 최종 보고서\n\n")
@@ -1845,26 +1845,26 @@ def main():
     if args.debug_step is not None:
         return run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text)
     
-    # Step 1: Grok 1차 예측 (Base 시나리오 CAGR) + 초안 작성
+    # Step 1: Grok 1차 예측 (Base 시나리오 CAGR) + 시장 해석·리스크 논의
     grok_system = load_system_prompt("grok") or load_fallback_system("grok")
-    print("\n[4/8] Grok(데이터 분석관) 1차 예측·초안 작성 중 (Base 시나리오 CAGR, web_search)...")
+    print("\n[4/8] Grok(데이터 분석관) 1차 예측·논의 중 (Base 시나리오 CAGR, web_search)...")
     t0 = time.perf_counter()
     initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices, computed_valuation_text)
     draft_result = call_grok_api(grok_key, initial_prompt, preferred_model=args.grok_model, use_web_search=not args.no_grok_web_search, system_content=grok_system)
     
     if draft_result[0] is None:
-        print("[ERROR] [4/8] 초안 작성 실패")
+        print("[ERROR] [4/8] Grok 1차 논의 실패")
         return 1
     
     draft_report, grok_model = draft_result
     alpha_cagr, current_total_krw, market_data = parse_alpha_json(draft_report)
     if alpha_cagr is not None:
         print(f"  Base CAGR(Grok): {alpha_cagr}%")
-    print(f"[4/8] Grok 1차 예측·초안 완료 ({len(draft_report)} 문자). (소요: {format_elapsed(time.perf_counter() - t0)})")
+    print(f"[4/8] Grok 1차 예측·논의 완료 ({len(draft_report)} 문자). (소요: {format_elapsed(time.perf_counter() - t0)})")
     
-    # Step 2: Gemini 2차 예측 (Base 시나리오 CAGR) + 리스크 감사
+    # Step 2: Gemini 2차 예측 (Base 시나리오 CAGR) + 검토 논의
     gemini_system = load_system_prompt("gemini") or load_fallback_system("gemini")
-    print("\n[5/8] Gemini(리스크 감사관) 2차 예측·감사 중 (Base 시나리오 CAGR, Google Search)...")
+    print("\n[5/8] Gemini(리스크 감사관) 2차 예측·검토 논의 중 (Base 시나리오 CAGR, Google Search)...")
     t0 = time.perf_counter()
     audit_prompt = create_audit_prompt(draft_report, alpha_cagr, portfolio_prompt)
     audit_result = call_gemini_api(gemini_key, audit_prompt, preferred_model=args.gemini_model, system_content=gemini_system)
@@ -1874,17 +1874,17 @@ def main():
     beta_cagr, risk_level, audit_notes = parse_beta_json(audit_comments) if audit_comments else (None, None, None)
     
     if not audit_comments:
-        print("[WARNING] Gemini 감사 실패 - 최종 단계로 진행합니다.")
-        audit_comments = "감사를 받지 못했습니다."
+        print("[WARNING] Gemini 검토 논의 실패 - 최종 단계로 진행합니다.")
+        audit_comments = "검토 논의를 받지 못했습니다."
     else:
         if beta_cagr is not None:
             print(f"  Base CAGR(Gemini): {beta_cagr}%")
         if risk_level:
             print(f"  리스크 수준: {risk_level}")
     
-    print(f"[5/8] Gemini 감사 완료 ({len(audit_comments)} 문자). (소요: {format_elapsed(time.perf_counter() - t0)})")
+    print(f"[5/8] Gemini 검토 논의 완료 ({len(audit_comments)} 문자). (소요: {format_elapsed(time.perf_counter() - t0)})")
     
-    # Round 2: Grok 수용·반박 (Gemini 감사 검토)
+    # Round 2: Grok 수용·반박 (Gemini 검토 논의 검토)
     grok_r2 = ""
     gemini_r2 = ""
     print("\n[6/8] 2라운드(수용·반박) 진행 중...")
@@ -1953,8 +1953,8 @@ def main():
             f.write(f"- 미국 주가: {', '.join(us_stock_prices.keys())} ({yesterday.strftime('%Y-%m-%d')} API 조회)\n")
         f.write(f"\n**성장률:** Base(Grok) {alpha_cagr or 'N/A'}% | Base(Gemini) {beta_cagr or 'N/A'}% → GPT 세 Base 비교 후 Bear/Bull 반영해 최종 확정\n")
         f.write(f"\n**사용 모델:**\n")
-        f.write(f"- Grok (1차 예측·초안): `{grok_model or 'N/A'}`\n")
-        f.write(f"- Gemini (2차 예측·감사): `{gemini_model or 'N/A'}`\n")
+        f.write(f"- Grok (1차 예측·논의): `{grok_model or 'N/A'}`\n")
+        f.write(f"- Gemini (2차 예측·검토 논의): `{gemini_model or 'N/A'}`\n")
         f.write(f"- OpenAI (최종 결정): `{openai_model_final or 'N/A'}`\n\n")
         f.write("---\n\n")
         f.write("## 최종 보고서\n\n")
@@ -1993,8 +1993,8 @@ def main():
     readme_lines = [
         "# 중간 데이터 (각 AI별 프롬프트 + 출력값)\n\n",
         "| 파일 | 내용 |\n|------|------|\n",
-        "| step1_grok.md | Grok: 시스템·유저 프롬프트 + 출력(초안) |\n",
-        "| step2_gemini.md | Gemini: 시스템·유저 프롬프트 + 출력(감사) |\n",
+        "| step1_grok.md | Grok: 시스템·유저 프롬프트 + 출력(CAGR·논의) |\n",
+        "| step2_gemini.md | Gemini: 시스템·유저 프롬프트 + 출력(검토 논의) |\n",
     ]
     if grok_r2:
         readme_lines.append("| step2b_grok.md | Grok 2라운드: 수용·반박 |\n")
@@ -2006,10 +2006,10 @@ def main():
     
     # AI별 요청 모델 vs 실제 사용 모델 출력
     print("\n[모델 사용 현황]")
-    print("  Grok (1차 예측·초안):")
+    print("  Grok (1차 예측·논의):")
     print(f"    요청 모델: {args.grok_model}")
     print(f"    실제 사용: {grok_model or 'N/A'}")
-    print("  Gemini (2차 예측·감사):")
+    print("  Gemini (2차 예측·검토 논의):")
     print(f"    요청 모델: {args.gemini_model}")
     print(f"    실제 사용: {gemini_model or 'N/A'}")
     print("  OpenAI (최종 결정):")
@@ -2020,7 +2020,7 @@ def main():
     print(f"   파일 위치: {report_path}")
     print(f"   Base CAGR(Grok): {alpha_cagr or 'N/A'}% | Base CAGR(Gemini): {beta_cagr or 'N/A'}%")
     print(f"   최종 보고서 크기: {len(final_report)} 문자")
-    print(f"   감사 결과 크기: {len(audit_comments)} 문자")
+    print(f"   검토 논의 크기: {len(audit_comments)} 문자")
     compute_and_print_cost(usd_krw_rate)
     return 0
 
