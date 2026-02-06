@@ -20,6 +20,13 @@
 - ✅ 포트폴리오 프롬프트 및 보고서 템플릿 정의 완료
 - ✅ 자동화 스크립트 (Windows Task Scheduler 연동)
 
+### 1.3 최근 업데이트 (2026-02)
+추가·변경된 기능은 **[docs/Changelog.md](docs/Changelog.md)**에 정리되어 있습니다.
+- API: temperature=0 통일(CAGR 변동 완화), CAGR 전용 테스트 옵션(`--test-cagr-only`, `--test-cagr-runs N`)
+- 보고서: 구조 재구성(실행요약→CAGR→시나리오→자산추이→액션플랜), 구간별 감쇠 AI 제안, 자산 추이 억원·연말 반영, 2035년 4% 월인출 요약
+- 데이터: 미국 주가 정규장 종가 기준 + 애프터마켓 명시
+- 디버그: Debug Step 0(환율·주가), `--check-prices`
+
 ---
 
 ## 2. 기능 요구사항

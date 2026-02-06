@@ -19,7 +19,11 @@
     --output-file FILE        결과 파일 경로 (기본값: 자동 생성)
     --no-grok-web-search     Grok web_search 비활성화
     --test-stock-price       주가 실시간 조회 테스트만 실행
-    --debug-step 1|2|3|4|5   1=Grok R1, 2=+Gemini R1, 3=+Grok R2, 4=+Gemini R2, 5=+OpenAI — 실행 후 해당 AI와 추가 질문 (종료: quit 또는 exit 입력)
+    --test-data-fetch        환율·미국주가 API 조회만 테스트 후 종료
+    --check-prices           환율·주가 확인만 실행 후 종료 (별도 실행용, --test-data-fetch와 동일)
+    --test-cagr-only         CAGR 예측만 1회 (Grok→Gemini→OpenAI 최소). 보고서 미생성. 변동 테스트용
+    --test-cagr-runs N       CAGR 예측만 N회 연속 수행 후 요약 표 출력 (예: --test-cagr-runs 4). temperature 효과 비교용
+    --debug-step 1|2|3|4|5   1=Grok R1, 2=+Gemini R1, 3=+Grok R2, 4=+Gemini R2, 5=+OpenAI — 실행 시 Step 0에서 환율·주가 확인 후 해당 AI와 추가 질문 (종료: quit 또는 exit 입력)
 """
 
 import os
@@ -58,7 +62,7 @@ PROMPTS_DIR = PROJECT_ROOT / "prompts"
 CONFIG_FILE = PROMPTS_DIR / "config.json"
 FALLBACK_FILES = {"grok": "fallback_grok_system.md", "gemini": "fallback_gemini_system.md", "openai": "fallback_openai_system.md"}
 
-# API 비용 추적 (1M tokens당 USD. docs/모델_가격_비교.md 참고)
+# API 비용 추적 (1M tokens당 USD. docs/Model_Price_Comparison.md 참고)
 API_USAGE_LOG = []
 
 def _estimate_tokens(text):
@@ -320,10 +324,10 @@ def fetch_us_stock_prices(tickers):
         return {}
 
 def _best_usd_price(prices):
-    """미국 주가 dict에서 애프터 > 정규 > 프리 순으로 단일 가격(USD) 반환."""
+    """미국 주가 dict에서 정규장 종가 우선, 없으면 애프터·프리 순으로 단일 가격(USD) 반환. 보고서 평가·계산용."""
     if not prices:
         return None
-    for key in ("post", "regular", "pre"):
+    for key in ("regular", "post", "pre"):
         if key in prices and prices[key] is not None:
             return float(prices[key])
     return None
@@ -538,7 +542,7 @@ def create_initial_prompt(portfolio_prompt_content, usd_krw_rate=None, us_stock_
                 realtime_data += f"  • 정규장: ${prices['regular']}\n"
             if 'post' in prices:
                 realtime_data += f"  • 애프터마켓: ${prices['post']}\n"
-        realtime_data += "\n위 주가를 그대로 사용하세요. 가장 최근 가격(애프터마켓 > 정규장 > 프리마켓)을 우선 사용하세요.\n\n"
+        realtime_data += "\n**기준:** 평가·자산표·보고서 본문의 주가는 **정규장 종가**를 사용하세요. 보고서에는 정규장 종가와 함께 **애프터마켓 가격도 함께 명시**할 것.\n\n"
     else:
         realtime_data += "**미국 주식 가격**: 조회 실패 → 웹 검색으로 찾으세요.\n\n"
     
@@ -619,8 +623,17 @@ def parse_beta_json(text):
 # Chat Completions이 아닌 Responses API(v1/responses)를 써야 하는 모델 (Thinking/Reasoning 지원)
 OPENAI_RESPONSES_API_MODELS = ("gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-pro", "gpt-5.2-pro-2025-12-11")
 
+# ---------------------------------------------------------------------------
+# temperature: CAGR 등 수치 예측의 "실행 간 변동"을 줄이기 위해 0으로 통일.
+# - temperature > 0 이면 같은 프롬프트라도 매 호출마다 다른 토큰이 샘플링되어
+#   예측 CAGR(12% vs 17% vs 19%)이 크게 달라질 수 있음.
+# - 0으로 두면 "가장 확률 높은 답" 위주로 출력되어 실행마다 숫자가 상대적으로 안정됨.
+# - 참고: web_search/검색 결과 차이로 인한 변동은 temperature와 무관하게 남을 수 있음.
+# ---------------------------------------------------------------------------
+API_TEMPERATURE = 0
+
 def _openai_responses_api(api_key, prompt, model_name, instructions=None, max_retries=3):
-    """Responses API(v1/responses)로 호출. input + instructions 사용."""
+    """Responses API(v1/responses)로 호출. input + instructions 사용. (temperature는 API 기본값 사용)"""
     url = "https://api.openai.com/v1/responses"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -630,7 +643,7 @@ def _openai_responses_api(api_key, prompt, model_name, instructions=None, max_re
     body = {
         "model": model_name,
         "input": prompt,
-        "max_output_tokens": 16000,
+        "max_output_tokens": 32000,
     }
     if instructions:
         body["instructions"] = instructions
@@ -682,13 +695,14 @@ def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
             models_to_try.remove(preferred_model)
         models_to_try.insert(0, preferred_model)
     
+    # temperature=0: 동일 입력 시 CAGR 등 수치가 실행마다 크게 달라지는 것을 완화 (API_TEMPERATURE)
     chat_data_template = {
         "messages": [
             {"role": "system", "content": instructions},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7,
-        "max_tokens": 16000
+        "temperature": API_TEMPERATURE,
+        "max_tokens": 32000
     }
     
     for model_name in models_to_try:
@@ -756,7 +770,8 @@ def call_openai_chat(api_key, messages, preferred_model=None):
         models.insert(0, preferred_model)
     for model_name in models:
         try:
-            r = requests.post(url, headers=headers, json={"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": 8000}, timeout=120)
+            # temperature=0: 디버그 대화에서도 수치 변동 완화 (API_TEMPERATURE)
+            r = requests.post(url, headers=headers, json={"model": model_name, "messages": messages, "temperature": API_TEMPERATURE, "max_tokens": 8000}, timeout=120)
             if r.status_code == 200 and r.json().get("choices"):
                 return r.json()["choices"][0]["message"]["content"], model_name
         except Exception:
@@ -772,7 +787,8 @@ def call_grok_chat(api_key, messages, preferred_model=None):
         models.insert(0, preferred_model)
     for model_name in models:
         try:
-            r = requests.post(base_url, headers=headers, json={"model": model_name, "messages": messages, "temperature": 0.2, "max_tokens": 8000}, timeout=120)
+            # temperature=0: 디버그 대화에서도 수치 변동 완화 (API_TEMPERATURE)
+            r = requests.post(base_url, headers=headers, json={"model": model_name, "messages": messages, "temperature": API_TEMPERATURE, "max_tokens": 8000}, timeout=120)
             if r.status_code == 200 and r.json().get("choices"):
                 return r.json()["choices"][0]["message"]["content"], model_name
         except Exception:
@@ -798,7 +814,8 @@ def call_gemini_chat(api_key, messages, preferred_model=None):
     for model_name in models:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-            data = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8000}}
+            # temperature=0: 디버그 대화에서도 수치 변동 완화 (API_TEMPERATURE)
+            data = {"contents": contents, "generationConfig": {"temperature": API_TEMPERATURE, "maxOutputTokens": 8000}}
             if system_text:
                 data["systemInstruction"] = {"parts": [{"text": system_text}]}
             r = requests.post(url, headers={"Content-Type": "application/json"}, json=data, timeout=120)
@@ -836,6 +853,7 @@ def _grok_responses_api_with_web_search(api_key, prompt, preferred_model=None, s
         "Content-Type": "application/json"
     }
     for model_name in web_search_models:
+        # temperature=0: Grok 1차 CAGR 예측이 실행마다 13% vs 18% 등으로 크게 흔들리지 않도록 (API_TEMPERATURE)
         body = {
             "model": model_name,
             "input": [
@@ -843,7 +861,7 @@ def _grok_responses_api_with_web_search(api_key, prompt, preferred_model=None, s
                 {"role": "user", "content": prompt}
             ],
             "max_output_tokens": 8000,
-            "temperature": 0.2,
+            "temperature": API_TEMPERATURE,
             "tools": [{"type": "web_search"}]
         }
         try:
@@ -893,13 +911,14 @@ def call_grok_api(api_key, prompt, preferred_model=None, use_web_search=True, sy
     }
     for model_name in possible_models:
         system_text = system_content if system_content is not None else load_fallback_system("grok")
+        # temperature=0: Grok 폴백(Chat)에서도 CAGR 등 수치 변동 완화 (API_TEMPERATURE)
         data = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_text},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.2,
+            "temperature": API_TEMPERATURE,
             "max_tokens": 8000
         }
         max_retries = 3
@@ -965,9 +984,10 @@ def call_gemini_api(api_key, prompt, preferred_model=None, system_content=None):
     for model_name in possible_models:
         url = f"{base_url}/{model_name}:generateContent?key={api_key}"
         
+        # temperature=0: Gemini 1차 CAGR(β) 예측이 실행마다 크게 흔들리지 않도록 (API_TEMPERATURE)
         data = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8000},
+            "generationConfig": {"temperature": API_TEMPERATURE, "maxOutputTokens": 8000},
             "tools": [{"google_search": {}}]
         }
         if system_content:
@@ -1041,6 +1061,82 @@ def create_audit_prompt(draft_report, alpha_cagr, portfolio_prompt_content):
 **포트폴리오 참고**: 
 {portfolio_2000}
 """
+
+def create_minimal_openai_cagr_prompt(alpha_cagr, beta_cagr, grok_tail, gemini_tail):
+    """CAGR 테스트 전용: OpenAI에게 보고서 없이 'Base CAGR'과 '최종 전략적 CAGR' 두 숫자만 요청하는 짧은 프롬프트."""
+    a = f"{alpha_cagr}%" if alpha_cagr is not None else "N/A"
+    b = f"{beta_cagr}%" if beta_cagr is not None else "N/A"
+    return f"""당신은 위웨이크 주식회사 수석 포트폴리오 매니저입니다. 아래만 수행하세요.
+
+- Grok Base CAGR(α): {a}
+- Gemini Base CAGR(β): {b}
+- Grok 논의 요약 (끝부분): {grok_tail[:600] if grok_tail else "(없음)"}
+- Gemini 논의 요약 (끝부분): {gemini_tail[:600] if gemini_tail else "(없음)"}
+
+위를 참고하여 (1) 당신의 Base 시나리오 CAGR 한 개, (2) Bear/Bull 반영한 최종 전략적 CAGR 한 개만 제시하세요.
+**반드시 마지막에 한 줄로만 출력:** Base: X.X%  Final: X.X%  (숫자만 정확히, 예: Base: 17.5%  Final: 16.9%)"""
+
+def parse_openai_cagr_minimal(text):
+    """OpenAI 최소 CAGR 응답에서 Base / Final 숫자 추출. (base_cagr, final_cagr) 또는 (None, None)."""
+    if not text:
+        return None, None
+    base_cagr = None
+    final_cagr = None
+    # Base: 17.5%  Final: 16.9%
+    m = re.search(r'Base\s*:\s*([\d.]+)\s*%', text, re.IGNORECASE)
+    if m:
+        base_cagr = float(m.group(1))
+    m = re.search(r'Final\s*:\s*([\d.]+)\s*%', text, re.IGNORECASE)
+    if m:
+        final_cagr = float(m.group(1))
+    # 한글: 수석.*?([\d.]+)% .*?최종.*?([\d.]+)% 등
+    if base_cagr is None:
+        m = re.search(r'(?:수석|Base)\s*(?:CAGR)?\s*[\s:]*([\d.]+)\s*%', text)
+        if m:
+            base_cagr = float(m.group(1))
+    if final_cagr is None:
+        m = re.search(r'(?:최종\s*전략적\s*CAGR|Final)\s*[\s:]*([\d.]+)\s*%', text)
+        if m:
+            final_cagr = float(m.group(1))
+    return base_cagr, final_cagr
+
+def run_test_cagr_only(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text=None):
+    """
+    CAGR 예측만 수행 (보고서 미생성). Grok → Gemini → OpenAI(최소 프롬프트) 한 사이클.
+    temperature 효과 등 실행 간 변동 테스트용. 반환: (alpha_cagr, beta_cagr, openai_base, openai_final).
+    """
+    grok_system = load_system_prompt("grok") or load_fallback_system("grok")
+    gemini_system = load_system_prompt("gemini") or load_fallback_system("gemini")
+    openai_system = (load_system_prompt("openai") or load_fallback_system("openai") or "")[:1500]
+
+    # Step 1: Grok
+    print("[CAGR 테스트] Step 1/3 Grok (Base CAGR α)...")
+    initial_prompt = create_initial_prompt(portfolio_prompt, usd_krw_rate, us_stock_prices, computed_valuation_text)
+    draft_result = call_grok_api(grok_key, initial_prompt, preferred_model=args.grok_model, use_web_search=not args.no_grok_web_search, system_content=grok_system)
+    if not draft_result[0]:
+        print("[ERROR] Grok 호출 실패")
+        return None, None, None, None
+    draft_report, _ = draft_result
+    alpha_cagr, _, _ = parse_alpha_json(draft_report)
+
+    # Step 2: Gemini
+    print("[CAGR 테스트] Step 2/3 Gemini (Base CAGR β)...")
+    audit_prompt = create_audit_prompt(draft_report, alpha_cagr, portfolio_prompt)
+    audit_result = call_gemini_api(gemini_key, audit_prompt, preferred_model=args.gemini_model, system_content=gemini_system)
+    audit_comments = audit_result[0] or ""
+    beta_cagr, _, _ = parse_beta_json(audit_comments) if audit_comments else (None, None, None)
+
+    # Step 3: OpenAI 최소(보고서 없이 Base/Final CAGR만)
+    print("[CAGR 테스트] Step 3/3 OpenAI (Base + 최종 전략적 CAGR)...")
+    minimal_prompt = create_minimal_openai_cagr_prompt(
+        alpha_cagr, beta_cagr,
+        (draft_report or "")[-800:],
+        (audit_comments or "")[-800:]
+    )
+    openai_content, _ = call_openai_api(openai_key, minimal_prompt, preferred_model=args.openai_model, system_content=openai_system)
+    openai_base, openai_final = parse_openai_cagr_minimal(openai_content) if openai_content else (None, None)
+
+    return alpha_cagr, beta_cagr, openai_base, openai_final
 
 def create_grok_r2_prompt(gemini_audit_text):
     """2라운드 Grok용: Gemini 감사·비판을 검토하여 수용/반박만 정리."""
@@ -1184,12 +1280,29 @@ def parse_arguments():
         help='환율·미국주가 API 조회만 테스트 (AI 호출 없이 데이터만 출력 후 종료)'
     )
     parser.add_argument(
+        '--check-prices',
+        action='store_true',
+        help='환율·주가 확인만 실행 후 종료 (--test-data-fetch와 동일, 별도 실행용)'
+    )
+    parser.add_argument(
         '--debug-step',
         type=int,
         choices=[1, 2, 3, 4, 5],
         default=None,
         metavar='1|2|3|4|5',
         help='1~5 단계까지 실행 후 해당 AI와 대화. 대화 중 next/다음 입력 시 다음 단계로 진행. 종료: quit 또는 exit 입력'
+    )
+    parser.add_argument(
+        '--test-cagr-only',
+        action='store_true',
+        help='CAGR 예측만 1회 수행 (Grok→Gemini→OpenAI 최소). 보고서 미생성. temperature/변동 테스트용'
+    )
+    parser.add_argument(
+        '--test-cagr-runs',
+        type=int,
+        default=None,
+        metavar='N',
+        help='CAGR 예측만 N회 연속 수행 후 요약 표 출력 (예: --test-cagr-runs 4). temperature 효과 비교용'
     )
     
     return parser.parse_args()
@@ -1478,11 +1591,39 @@ def _write_debug_report(draft_report, final_report, usd_krw_rate, us_stock_price
     print(f"[디버그] 보고서 저장 완료: report/{report_filename}, 중간: report/{date_time_dirname}/")
     return report_path
 
+def _print_exchange_and_stock_prices(usd_krw_rate, us_stock_prices, title="환율·주가 확인"):
+    """환율·미국 주가를 공통 형식으로 출력 (디버그 Step 0 및 --check-prices용)."""
+    print("\n" + "=" * 60)
+    print(f"[디버그 Step 0] {title}")
+    print("=" * 60)
+    if usd_krw_rate:
+        print(f"\n  USD/KRW: {usd_krw_rate}원")
+    else:
+        print("\n  USD/KRW: (조회 실패)")
+    if us_stock_prices:
+        print(f"\n  미국 주가: {len(us_stock_prices)}개 종목")
+        for ticker, prices in us_stock_prices.items():
+            parts = []
+            if prices.get("pre") is not None:
+                parts.append(f"프리 ${prices['pre']}")
+            if prices.get("regular") is not None:
+                parts.append(f"정규 ${prices['regular']}")
+            if prices.get("post") is not None:
+                parts.append(f"애프터 ${prices['post']}")
+            print(f"    • {ticker}: {' | '.join(parts) or 'N/A'}")
+    else:
+        print("\n  미국 주가: (조회 실패 또는 종목 없음)")
+    print("=" * 60 + "\n")
+
 def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text=None):
     """--debug-step N: 1=Grok R1, 2=+Gemini R1, 3=+Grok R2, 4=+Gemini R2, 5=+OpenAI. 'next'/'다음' 입력 시 다음 단계로 진행."""
     max_step = 5
     target_step = args.debug_step
-    print(f"\n[디버그] Step {target_step}/{max_step}까지 실행 후 대화. 다음 단계로: next 또는 다음. 종료: quit 또는 exit 입력\n")
+
+    # 디버그 Step 0: 환율·주가 확인 (가장 먼저 출력)
+    _print_exchange_and_stock_prices(usd_krw_rate, us_stock_prices or {}, "환율·주가 확인 (이번 디버그에서 사용할 데이터)")
+
+    print(f"[디버그] Step {target_step}/{max_step}까지 실행 후 대화. 다음 단계로: next 또는 다음. 종료: quit 또는 exit 입력\n")
 
     # 상태 누적 (다음 단계 진행용, 보고서 저장에 사용)
     draft_report = None
@@ -1774,8 +1915,8 @@ def main():
     openai_key, grok_key, gemini_key = load_env()
     print(f"[1/8] 환경 변수 로드 완료. (소요: {format_elapsed(time.perf_counter() - t0)})")
     
-    # --test-data-fetch: 환율·주가 API 조회만 테스트 (AI 호출 없음)
-    if args.test_data_fetch:
+    # --test-data-fetch / --check-prices: 환율·주가 확인만 실행 후 종료 (AI 호출 없음)
+    if args.test_data_fetch or args.check_prices:
         return run_test_data_fetch()
     # --test-models: 짧은 테스트로 요청/실제 모델명만 출력 후 종료
     if args.test_models:
@@ -1844,6 +1985,39 @@ def main():
     # --debug-step: 해당 스텝만 실행 후 추가 질문 대화 모드
     if args.debug_step is not None:
         return run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text)
+
+    # --test-cagr-runs N: CAGR 예측만 N회 연속 실행 후 요약 표 (temperature 효과 비교용)
+    if getattr(args, 'test_cagr_runs', None) and args.test_cagr_runs and args.test_cagr_runs >= 1:
+        runs = []
+        for i in range(args.test_cagr_runs):
+            print(f"\n{'='*60}\n[테스트 CAGR 예측] 실행 {i+1}/{args.test_cagr_runs}\n{'='*60}")
+            a, b, ob, ofn = run_test_cagr_only(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text)
+            runs.append((a, b, ob, ofn))
+            print(f"  → Grok α: {a if a is not None else 'N/A'}% | Gemini β: {b if b is not None else 'N/A'}% | OpenAI Base: {ob if ob is not None else 'N/A'}% | OpenAI Final: {ofn if ofn is not None else 'N/A'}%")
+        print("\n" + "="*60)
+        print("[CAGR 요약] (temperature=0 적용 후 실행 간 변동 확인)")
+        print("="*60)
+        print(f"  {'Run':<6} {'Grok α':<10} {'Gemini β':<10} {'OpenAI Base':<12} {'OpenAI Final':<12}")
+        print("-"*60)
+        for i, (a, b, ob, ofn) in enumerate(runs, 1):
+            sa = str(a) if a is not None else "N/A"
+            sb = str(b) if b is not None else "N/A"
+            so = str(ob) if ob is not None else "N/A"
+            sf = str(ofn) if ofn is not None else "N/A"
+            print(f"  {i:<6} {sa:<10} {sb:<10} {so:<12} {sf:<12}")
+        print("="*60)
+        return 0
+
+    # --test-cagr-only: CAGR 예측만 1회 (보고서 없음)
+    if getattr(args, 'test_cagr_only', False):
+        print("\n[CAGR 예측만 1회] Grok → Gemini → OpenAI(최소). 보고서 미생성.\n")
+        a, b, ob, ofn = run_test_cagr_only(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_rate, us_stock_prices, args, computed_valuation_text)
+        print("\n" + "="*60)
+        print("[결과] Grok α: {}% | Gemini β: {}% | OpenAI Base: {}% | OpenAI Final: {}%".format(
+            a if a is not None else "N/A", b if b is not None else "N/A",
+            ob if ob is not None else "N/A", ofn if ofn is not None else "N/A"))
+        print("="*60)
+        return 0
     
     # Step 1: Grok 1차 예측 (Base 시나리오 CAGR) + 시장 해석·리스크 논의
     grok_system = load_system_prompt("grok") or load_fallback_system("grok")

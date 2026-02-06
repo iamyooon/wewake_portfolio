@@ -4,27 +4,29 @@ OpenAI, Grok, Gemini 세 개의 AI 서비스를 활용하여 더욱 정확하고
 
 ## 🎯 개요
 
-### 협업 워크플로우
+### 협업 워크플로우 (Version 3)
 
 ```
-포트폴리오 데이터
+포트폴리오 데이터 + 환율·주가
     ↓
-[Step 1] OpenAI: 초안 보고서 작성
+[Step 1] Grok: 초안 + Base 시나리오 CAGR (구간별 감쇠 제안 포함)
     ↓
-[Step 2] Grok: 리뷰 및 개선 제안
+[Step 2] Gemini: 감사 + Base CAGR (감쇠 검토·제안)
     ↓
-[Step 3] Gemini: 데이터 정확성 및 수치 계산 검증
+[Step 2b] Grok / Gemini: 수용·반박 요약 (선택)
     ↓
-[Step 4] OpenAI: 모든 피드백 반영하여 최종 보고서 완성
+[Step 3] OpenAI: 세 Base 비교 + Bear/Bull 반영 → 최종 보고서
     ↓
 최종 보고서 (마크다운)
 ```
 
+- 모든 AI 호출은 **temperature=0**으로 CAGR 변동을 완화합니다.
+
 ### AI 역할 분담
 
-- **OpenAI (GPT-4o)**: 구조화된 보고서 초안 작성 및 최종 통합
-- **Grok (grok-4)**: 비판적 리뷰, 논리성 검증, 개선 제안
-- **Gemini (gemini-2.5-pro)**: 데이터 정확성 검증, 수치 계산 검토
+- **Grok**: 데이터 분석관 — 초안 작성, Base CAGR·구간별 감쇠 제안, 2라운드 수용·반박
+- **Gemini**: 리스크 감사관 — 감사, Base CAGR·감쇠 검토·제안, 2라운드 수용·반박
+- **OpenAI**: 수석 매니저 — 세 Base 비교, Bear/Bull 반영, 최종 CAGR·보고서 완성
 
 ## 📋 사전 요구사항
 
@@ -98,6 +100,14 @@ python scripts\generate_portfolio_report_3ai.py \
   
 - `--output-file`: 결과 파일 경로 (기본값: 자동 생성)
 
+**유틸·테스트 옵션:**
+- `--check-prices`: 환율·미국 주가만 조회 후 종료 (AI 미호출)
+- `--test-data-fetch`: 환율·주가 API 테스트 후 종료
+- `--test-models`: 각 AI에 짧은 요청 1회, 모델명 확인만
+- `--test-cagr-only`: CAGR 예측만 1회 (Grok→Gemini→OpenAI), 보고서 미생성
+- `--test-cagr-runs N`: CAGR 예측만 N회 연속 후 요약 표 출력 (변동 확인용)
+- `--debug-step 1|2|3|4|5`: 해당 단계까지 실행 후 대화 모드 (Step 0: 디버그 시 맨 앞 환율·주가 출력)
+
 ## 📄 출력 파일 형식
 
 생성된 보고서 파일은 다음 구조를 가집니다:
@@ -131,42 +141,31 @@ python scripts\generate_portfolio_report_3ai.py \
 [검증 결과]
 ```
 
-## 🔍 각 AI의 역할 상세
+## 🔍 각 AI의 역할 상세 (Version 3)
 
-### OpenAI (초안 작성 & 최종 통합)
+### Grok (데이터 분석관 · 1차)
 
 **역할**: 
-- 포트폴리오 프롬프트를 기반으로 구조화된 보고서 초안 작성
-- Grok의 리뷰와 Gemini의 검증 결과를 종합하여 최종 보고서 완성
+- 포트폴리오·실시간 데이터 기반 초안 작성, Base 시나리오 CAGR 예측
+- 구간별 감쇠율 제안(근거 포함), 2라운드에서 Gemini 감사에 대한 수용·반박 정리
 
-**강점**:
-- 구조화된 문서 작성 능력
-- 일관성 있는 형식 유지
-- 복잡한 정보 통합 능력
+**강점**: 시장 모멘텀·기술적 분석, 비판적 검토
 
-### Grok (리뷰어)
+### Gemini (리스크 감사관 · 2차)
 
 **역할**:
-- 초안 보고서의 정확성, 완성도, 논리성 검토
-- 구체적인 개선 제안 제공
-- 비판적 관점에서 오류 및 모순 지적
+- Grok 초안·Base CAGR 검토, 거시·리스크 반영 감사
+- Beta(Base) CAGR 제안, 구간별 감쇠 검토·제안, 2라운드에서 Grok R2에 대한 수용·반박 정리
 
-**강점**:
-- 비판적 사고 능력
-- 논리적 오류 발견
-- 구체적인 개선 제안
+**강점**: 수치·데이터 일관성 검증, 보수적 성장률 검토
 
-### Gemini (데이터 검증자)
+### OpenAI (수석 매니저 · 최종)
 
 **역할**:
-- 수치 계산 정확성 검증 (자산 합계, CAGR, 확률 등)
-- 데이터 일관성 검증 (포트폴리오 프롬프트와의 일치 여부)
-- 논리적 오류 및 수치상 모순 발견
+- Grok·Gemini Base CAGR 및 2라운드 합의 요약 반영
+- 세 Base 비교 후 Bear/Bull 반영해 최종 CAGR 확정, 보고서 완성(구조: 실행요약→현황→CAGR→시나리오→자산추이→추가분석→액션플랜)
 
-**강점**:
-- 수치 계산 정확도
-- 데이터 일관성 검증
-- 상세한 검증 보고서 작성
+**강점**: 구조화된 문서, 복잡한 정보 통합, 최종 의사결정
 
 ## ⚠️ 주의사항
 
@@ -241,10 +240,12 @@ python scripts\generate_portfolio_report_3ai.py \
 ## 📝 참고 자료
 
 - [PDR 문서](../PDR_Multi_AI_Portfolio_Report.md)
+- [설계·동작 흐름](../docs/3AI_Report_Design.md), [본기능 동작 흐름](../docs/Main_Flow.md)
+- [추가·변경 기능 이력](../docs/Changelog.md)
 - [포트폴리오 프롬프트](../portfolio_prompt.txt)
 - [보고서 생성 규칙](../.portfolio-rules)
 
 ---
 
 **작성일**: 2026년 1월 26일  
-**버전**: 1.0
+**버전**: 1.1 (2026-02: Version 3 워크플로우, temperature=0, 감쇠 제안, CLI 옵션 반영)

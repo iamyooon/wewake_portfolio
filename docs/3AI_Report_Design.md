@@ -4,7 +4,7 @@
 
 | 버전 | 설명 | 스크립트/흐름 |
 |------|------|----------------|
-| **Version 1** | OpenAI 초안 → Grok 리뷰 → Gemini 검증 → OpenAI 최종 (4회 호출) | `본기능_동작_흐름.md` 참고. 초안 작성자가 OpenAI인 구조. |
+| **Version 1** | OpenAI 초안 → Grok 리뷰 → Gemini 검증 → OpenAI 최종 (4회 호출) | `Main_Flow.md` 참고. 초안 작성자가 OpenAI인 구조. |
 | **Version 2** | Grok Alpha → Gemini Beta → GPT 최종 (3회 호출, 성장률 합의 중심) | `generate_portfolio_report_3ai.py` (2라운드 미포함 시 동일) |
 | **Version 3** | 셋 다 **Base 시나리오** CAGR 예측 → R2 협상 → **GPT만 Bear/Bull 반영**해 최종 (5회 호출, 다중 라운드) | **현재 구현.** `generate_portfolio_report_3ai.py` |
 
@@ -73,6 +73,17 @@
 - **2라운드 유저 템플릿:** `prompts/step2b_grok_user_template.md` (플레이스홀더 `{{gemini_audit_text}}`), `prompts/step2b_gemini_user_template.md` (플레이스홀더 `{{grok_r2_response}}`)
 - **Step 3:** `step3_openai_system.md`, `step3_user_template.md`에 2라운드 입력 `{{grok_r2_response}}`, `{{gemini_r2_response}}` 및 **세 Base 비교 + Bear/Bull 반영** 지시 반영.
 
+## 6. 최근 설계 반영 사항 (Version 3 보완)
+
+- **API 안정화:** 모든 AI 호출 `temperature=0` 적용 → CAGR 변동 완화.
+- **보고서 구조:** 실행 요약 → 현재 상황 → CAGR 분석 → 시나리오 정의 → 자산 추이 → 추가 분석 → 액션플랜 순서. (`portfolio_prompt.txt` Step 4, step3 지시)
+- **구간별 감쇠:** 고정 비율 대신 Grok·Gemini·OpenAI가 구간별 감쇠율을 근거와 함께 제안. Step1/Step2/Step2b/Step3 프롬프트에 반영.
+- **자산 추이:** 단위 억원, 연초 성장 적용 후 해당 연도 인출/추가투자 연말 반영(보수적). 시나리오별 2035년 4% 기준 월 가능 인출액 요약 표 포함.
+- **주가 기준:** 미국 주가는 **정규장 종가(regular)** 로 평가·계산; 보고서에는 애프터마켓 가격도 함께 명시. (`_best_usd_price` regular 우선)
+- **디버그:** Debug Step 0 — 실행 시 맨 앞에 환율·주가 확인 출력. `--check-prices`: 환율·주가만 조회 후 종료.
+- **테스트 옵션:** `--test-cagr-only`(CAGR 1회), `--test-cagr-runs N`(CAGR N회 요약). 풀 보고서 없이 3-AI CAGR 변동 확인용.
+- **TBD:** 기존 예측 CAGR 참고(당장 미적용), 액션플랜 3-AI 논의(미정). → `docs/TBD.md`, 상세 이력 → `docs/Changelog.md`
+
 ---
 
 # Version 2 (이전 구조)
@@ -124,7 +135,7 @@
 2. **Gemini(Beta):** Grok 초안·Alpha를 비판적으로 검토, 거시·리스크 반영 **보수적 CAGR** 제안.
 3. **GPT(최종):** **(1) 자체 추측** → **(2) Alpha·Beta 의견 검토** → **(3) 세 관점 종합**하여 최종 전략적 CAGR 확정 및 로드맵·복리 저해 효과 경고.
 
-- Grok과 Gemini 간 **직접 협의(왕복)** 없음. GPT가 유일한 “취합·조정” 주체.
+- Grok과 Gemini 간 **직접 협의(왕복)** 없음. GPT가 유일한 "취합·조정" 주체.
 
 ## 5. 입출력·저장
 
@@ -147,12 +158,12 @@
 
 ## 8. 비용 참고
 
-- 1회 생성 시 **약 $0.85** (Grok 4.1 Fast, Gemini 3 Flash, gpt-5.2 기준). 상세는 `docs/모델_가격_비교.md` 참고.
+- 1회 생성 시 **약 $0.85** (Grok 4.1 Fast, Gemini 3 Flash, gpt-5.2 기준). 상세는 `docs/Model_Price_Comparison.md` 참고.
 
 ---
 
 ## 9. 관련 문서
 
-- **성장률 합의 상세:** `docs/성장률_합의_프로세스.md`
-- **모델·폴백·비용:** `docs/모델_가격_비교.md`, `docs/권장_모델_및_폴백.md`
+- **성장률 합의 상세:** `docs/Growth_Rate_Agreement_Process.md`
+- **모델·폴백·비용:** `docs/Model_Price_Comparison.md`, `docs/Recommended_Models_and_Fallback.md`
 - **프롬프트 폴더:** `prompts/README.md`

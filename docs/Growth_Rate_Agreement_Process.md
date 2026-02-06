@@ -37,6 +37,11 @@
 2. **Gemini(Beta):** 거시·리스크 기반 보수적 성장률 제안
 3. **GPT(최종):** **자체 추측**을 한 뒤 Grok·Gemini 의견을 **고려하여** 세 관점을 종합한 최종 CAGR 확정 및 로드맵·경고 반영
 
+## CAGR 안정화 및 구간별 감쇠 (최근 반영)
+
+- **temperature=0:** 모든 AI 호출(Grok, Gemini, OpenAI)에서 `temperature=0` 사용. 실행마다 CAGR이 크게 흔들리던 현상을 완화함(예: 4회 테스트 시 최종 CAGR 변동 폭 약 6.7%p → 1.2%p).
+- **구간별 감쇠 제안:** 고정 비율(90/75/50) 대신, **Grok**이 구간별 감쇠율을 근거와 함께 제안하고, **Gemini**가 검토·제안하며, **OpenAI**가 최종 확정. Step1/Step2/Step2b/Step3 프롬프트에 반영됨.
+
 ## 스크립트 연동
 
 - `generate_portfolio_report_3ai.py` 에서 위 3단계가 순차 호출됩니다.

@@ -12,9 +12,9 @@
 • 기본 모델: OpenAI gpt-5.2, Gemini gemini-3-flash-preview, Grok grok-4-1-fast-reasoning.
 • 폴백 정책: 기본보다 비싼 모델은 폴백 후보에서 제외 (gpt-5.2-pro, gemini-3-pro, grok-4 등). 비용 순으로만 시도.
 • 데이터: 환율(exchangerate.host), 미국주가(yfinance, 프리/정규/애프터마켓), 한국주가는 AI 검색(Grok web_search, Gemini Google Search).
-• 문서 추가: 성장률_합의_프로세스.md, 권장_모델_및_폴백.md, 모델_가격_비교.md, Gemini_Grok_검색_도구_설정.md 등.
+• 문서 추가: Growth_Rate_Agreement_Process.md, Recommended_Models_and_Fallback.md, Model_Price_Comparison.md, Gemini_Grok_Search_Tools_Config.md 등.
 
 ■ 추가/변경 파일 (14)
 - scripts/generate_portfolio_report_3ai.py (신규)
 - prompts/step1_grok_system.md, step2_gemini_system.md, step3_openai_system.md, README.md (신규)
-- docs/ 성장률_합의_프로세스, 권장_모델_및_폴백, 모델_가격_비교, 본기능_동작_흐름, Gemini_Grok_검색_도구_설정, OPENAI_GPT52_PRO_404, GPT52_PRO_비용_안내, GEMINI_429_폴백_정보, web_search_데이터_제약_이유 (신규)
+- docs/ Growth_Rate_Agreement_Process, Recommended_Models_and_Fallback, Model_Price_Comparison, Main_Flow, Gemini_Grok_Search_Tools_Config, OPENAI_GPT52_PRO_404, GPT52_PRO_Cost_Guide, GEMINI_429_Fallback_Info, web_search_Data_Constraints (신규)
