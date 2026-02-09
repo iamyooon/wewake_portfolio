@@ -2,12 +2,12 @@
   "portfolio_prompt_file": "portfolio_prompt.txt",
   "us_tickers": ["TSLA", "MAGS", "SMH", "MSTR", "MELI", "NU", "PLTR"],
   "portfolio_holdings": {
-    "cash_krw": 133000000,
+    "cash_krw": 89050000,
     "positions": [
-      {"account": "법인 Active", "symbol": "TSLA", "qty": 819, "currency": "USD", "name": "TSLA"},
+      {"account": "법인 Active", "symbol": "TSLA", "qty": 874, "currency": "USD", "name": "TSLA"},
       {"account": "법인 Active", "symbol": "MAGS", "qty": 827, "currency": "USD", "name": "MAGS"},
       {"account": "법인 Active", "symbol": "SMH", "qty": 98, "currency": "USD", "name": "SMH"},
-      {"account": "법인 Active", "symbol": "MSTR", "qty": 365, "currency": "USD", "name": "MSTR"},
+      {"account": "법인 Active", "symbol": "MSTR", "qty": 444, "currency": "USD", "name": "MSTR"},
       {"account": "법인 Active", "symbol": "MELI", "qty": 3, "currency": "USD", "name": "MELI"},
       {"account": "법인 Active", "symbol": "NU", "qty": 305, "currency": "USD", "name": "NU"},
       {"account": "법인 Active", "symbol": "000660.KS", "qty": 38, "currency": "KRW", "name": "SK하이닉스"},
