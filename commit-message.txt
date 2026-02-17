@@ -1,6 +1,4 @@
-chore: git hook 및 커밋 방식 정리 (english-write-study-app 참고)
+feat: CAGR 장기 관점 강화 + 8시 작업 3-AI 전용
 
-- scripts/git: install-git-hooks.ps1, pre-commit.ps1 추가 (pre-commit에서 .py 문법 검사)
-- commit.ps1, .git-commit-template.txt, COMMIT_GUIDE.md 추가 (한글 인코딩 방지, -F 파일 커밋)
-- prompts: 목표/숫자는 portfolio_prompt만, step은 역할·형식만 (step3 2030년 25억·월 1,100만 제거)
-- script: 디버그 step 소요시간 출력, 종료 quit/exit만, step2b 프롬프트 연동
+- prompts: CAGR을 연단위·다년도 기대수익률로 명시, 당장 거시/이번 주 블랙스완 대신 장기 궤적·구조적 요인 우선
+- scripts/generate_report_with_cursor.ps1: 매일 8시 작업이 generate_portfolio_report_3ai.py(3-AI)만 실행하도록 변경
