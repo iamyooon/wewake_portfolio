@@ -18,7 +18,7 @@
 
 | 파일 | 역할 |
 |------|------|
-| **portfolio_prompt.txt** | **목표·계좌·종목·운영 전략·보고서 구조** 등 포트폴리오 전반. Persona, 실시간 데이터 지침, 보유 자산(Cost Basis), 운용 로직·제약, 보고서 구조·출력 지침, Tone & Manner. Step1/2/3는 이 내용을 **참조만** 하고, 목표·숫자는 여기만 바꾸면 됨. |
+| **portfolio_prompt.txt** | **목표·계좌·종목·운영 전략·보고서 구조** 등 포트폴리오 전반. Persona, 실시간 데이터 지침, 보유 자산(Cost Basis), 운용 로직·제약, **스윙트레이딩 규칙**(현금 10%+TSLA 10%+MSTR 10% 활용, 매매 시점 조언 포함), 보고서 구조·출력 지침, Tone & Manner. Step1/2/3는 이 내용을 **참조만** 하고, 목표·숫자는 여기만 바꾸면 됨. |
 
 ---
 
@@ -36,7 +36,7 @@
 
 | 파일 | 역할 |
 |------|------|
-| **step1_grok_system.md** | Grok **시스템** 역할: 데이터 분석관, 전 종목 테이블화·실시간 환율·종가 반영, **Base 시나리오 CAGR** 예측(연단위·다년도), 출력 하단 JSON(`alpha_cagr`, `current_total_krw`, `market_data`) 지시. |
+| **step1_grok_system.md** | Grok **시스템** 역할: 데이터 분석관, 전 종목 테이블화·실시간 환율·종가 반영, **Base 시나리오 CAGR** 예측, **스윙트레이딩 매매 조언**(언제 매도·매수할지 가격대/구간/트리거), 출력 하단 JSON(`alpha_cagr`, `current_total_krw`, `market_data`) 지시. |
 | **step1_user_template.md** | Grok **유저** 메시지 템플릿. 치환: `{{date_str}}`, `{{yesterday_str}}`, `{{realtime_data}}`, `{{portfolio_prompt_content}}`. 초안 구조·실시간 데이터 사용·CAGR·JSON 형식 지시. |
 
 ---
@@ -45,7 +45,7 @@
 
 | 파일 | 역할 |
 |------|------|
-| **step2_gemini_system.md** | Gemini **시스템** 역할: 리스크 감사관, Grok와 **동일 Base 시나리오** 전제로 **독립 CAGR** 예측, 장기 관점·구조적 리스크, 출력 JSON(`beta_cagr`, `risk_level`, `audit_notes`) 지시. |
+| **step2_gemini_system.md** | Gemini **시스템** 역할: 리스크 감사관, Grok와 **동일 Base 시나리오** 전제로 **독립 CAGR** 예측, Grok **스윙 매매 조언 검토**(타이밍·과매매 리스크, 동의/이견), 출력 JSON(`beta_cagr`, `risk_level`, `audit_notes`) 지시. |
 | **step2_user_template.md** | Gemini **유저** 메시지 템플릿. 치환: `{{alpha_cagr}}`, `{{draft_report}}`, `{{portfolio_prompt_content}}`(앞 2000자만). Base 시나리오·2라운드 입력용 Grok 초안 전문 포함. |
 
 ---
@@ -65,7 +65,7 @@
 
 | 파일 | 역할 |
 |------|------|
-| **step3_openai_system.md** | OpenAI **시스템** 역할: 수석 매니저, 자신의 Base CAGR 예측 → **세 Base 비교** → Bear/Bull 반영해 **최종 CAGR 확정**, 전 종목 포함·로드맵·복리 경고, 포맷·**출력 간결화** 지침. |
+| **step3_openai_system.md** | OpenAI **시스템** 역할: 수석 매니저, 자신의 Base CAGR 예측 → **세 Base 비교** → Bear/Bull 반영해 **최종 CAGR 확정**, **스윙트레이딩 매매 조언** 섹션(언제 매도·매수 제안) 포함, 전 종목·로드맵·복리 경고, 포맷·**출력 간결화** 지침. |
 | **step3_user_template.md** | OpenAI **유저** 메시지 템플릿. 치환: `{{alpha_cagr}}`, `{{beta_cagr}}`, `{{grok_draft}}`, `{{gemini_audit_text}}`, `{{grok_r2_response}}`, `{{gemini_r2_response}}`, `{{portfolio_prompt_content}}`(앞 3000자). 시스템 지침 준수·간결 작성 요약. |
 
 ---

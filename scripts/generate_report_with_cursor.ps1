@@ -1,7 +1,7 @@
 # 포트폴리오 보고서 자동 생성 PowerShell 스크립트
 # 매일 아침 8시에 실행되도록 Windows Task Scheduler에 등록
 # 3-AI(Grok + Gemini + OpenAI) 스크립트만 실행
-# 콘솔에는 영어만 출력 (한글 깨짐 방지). 상세 한글 로그는 report\daily_*.log (UTF-8) 참고.
+# 콘솔에는 영어만 출력 (한글 깨짐 방지). 상세 한글 로그는 report\YYYYMMDD_HHmm\daily_*.log (UTF-8) 참고.
 
 param(
     [string]$ProjectPath = "C:\Users\iamyo\wewake_portfolio"
@@ -78,14 +78,39 @@ if (Test-Path $pythonScript) {
     
     if ($python) {
         Write-Host "Python: $($python.Source)" -ForegroundColor Green
-        # Save full output to UTF-8 log file (Korean OK). Do not echo to console to avoid garbled text.
+        # Save full output to UTF-8 log file. Also echo to console (UTF-8 encoding set above).
+        # If Korean appears garbled in console, run: chcp 65001
         $logDir = Join-Path $ProjectPath "report"
         if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
         $logFile = Join-Path $logDir ("daily_$(Get-Date -Format 'yyyyMMdd_HHmmss').log")
-        $scriptOutput = & $python.Source $pythonScript 2>&1
-        $scriptOutput | Out-File -FilePath $logFile -Encoding utf8
-        Write-Host "Output saved to log (UTF-8): $logFile" -ForegroundColor Gray
+        # chcp 65001: UTF-8 so Korean displays correctly in console
+        # cmd /c: PowerShell이 Python stderr(Traceback)를 NativeCommandError로 던지는 문제 회피
+        $scriptOutput = cmd /c "chcp 65001 >nul && `"$($python.Source)`" `"$pythonScript`" 2>&1"
+        $scriptOutput | Tee-Object -FilePath $logFile -Encoding utf8
         $exitCode = $LASTEXITCODE
+
+        # daily_*.log를 리포트 디렉토리(report/YYYYMMDD_HHmm/)로 이동 (이번 실행에서 생성된 보고서인 경우만)
+        $latestReport = Get-ChildItem (Join-Path $ProjectPath "report\portfolio_report_*.md") -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $reportIsFromThisRun = $latestReport -and (((Get-Date) - $latestReport.LastWriteTime).TotalMinutes -lt 15)
+        if ($reportIsFromThisRun -and (Test-Path $logFile)) {
+            if ($latestReport.Name -match 'portfolio_report_(\d{8})_(\d{4})_') {
+                $reportSubDir = $matches[1] + "_" + $matches[2]
+                $targetDir = Join-Path $ProjectPath "report\$reportSubDir"
+                if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
+                $targetLog = Join-Path $targetDir (Split-Path $logFile -Leaf)
+                Move-Item -Path $logFile -Destination $targetLog -Force -ErrorAction SilentlyContinue
+                if (Test-Path $targetLog) {
+                    Write-Host "Output saved to log (UTF-8): report\$reportSubDir\$(Split-Path $logFile -Leaf)" -ForegroundColor Gray
+                } else {
+                    Write-Host "Output saved to log (UTF-8): $logFile" -ForegroundColor Gray
+                }
+            } else {
+                Write-Host "Output saved to log (UTF-8): $logFile" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "Output saved to log (UTF-8): $logFile" -ForegroundColor Gray
+        }
+
         if ($exitCode -ne 0) {
             Write-Host "`nFailed (exit code: $exitCode). See log for details." -ForegroundColor Red
             exit $exitCode

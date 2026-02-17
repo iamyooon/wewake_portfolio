@@ -112,9 +112,99 @@ def _get_price(provider, model):
         return (0.50, 3.0)
     return (1.0, 5.0)
 
-def compute_and_print_cost(usd_krw_rate=None):
-    """API_USAGE_LOG 기준으로 비용(USD·KRW) 계산 후 출력. usd_krw_rate 있으면 원화 환산 표시."""
-    if not API_USAGE_LOG:
+USAGE_CACHE_FILE = REPORTS_DIR / ".usage_cache.json"
+
+def _load_usage_cache():
+    """report/.usage_cache.json에서 이번 달 누적 사용량 로드. {provider: {inp, out, cost}}"""
+    try:
+        if USAGE_CACHE_FILE.exists():
+            data = json.loads(USAGE_CACHE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+def _save_usage_cache(cache):
+    """이번 달 누적 사용량 저장."""
+    try:
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        USAGE_CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _merge_usage_to_cache(cache, by_provider_costs):
+    """API_USAGE_LOG 기반 비용을 cache에 합산. by_provider_costs = {provider: cost}."""
+    now = datetime.now()
+    month_key = f"{now.year}-{now.month:02d}"
+    if month_key not in cache or not isinstance(cache[month_key], dict):
+        cache[month_key] = {"openai": {"inp": 0, "out": 0, "cost": 0}, "grok": {"inp": 0, "out": 0, "cost": 0}, "gemini": {"inp": 0, "out": 0, "cost": 0}}
+    m = cache[month_key]
+    for prov, cost in by_provider_costs.items():
+        if prov not in m or not isinstance(m[prov], dict):
+            m[prov] = {"inp": 0, "out": 0, "cost": 0}
+        inp_sum = sum(u["input_tokens"] for u in API_USAGE_LOG if u["provider"] == prov)
+        out_sum = sum(u["output_tokens"] for u in API_USAGE_LOG if u["provider"] == prov)
+        m[prov]["inp"] = m[prov].get("inp", 0) + inp_sum
+        m[prov]["out"] = m[prov].get("out", 0) + out_sum
+        m[prov]["cost"] = m[prov].get("cost", 0) + cost
+
+def fetch_openai_usage_this_month(api_key):
+    """OpenAI Usage API로 이번 달 completions 사용량 조회. (input_tokens, output_tokens, 추정비용USD) 또는 None."""
+    try:
+        now = datetime.now()
+        start = datetime(now.year, now.month, 1)
+        start_ts = int(start.timestamp())
+        end_ts = int(now.timestamp())
+        url = f"https://api.openai.com/v1/organization/usage/completions?start_time={start_ts}&end_time={end_ts}&bucket_width=1d&limit=31"
+        r = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        inp_total, out_total = 0, 0
+        for bucket in (data.get("data") or []):
+            result = bucket.get("result") or []
+            if isinstance(result, list):
+                for r0 in result:
+                    inp_total += int(r0.get("input_tokens") or 0)
+                    out_total += int(r0.get("output_tokens") or 0)
+            elif isinstance(result, dict):
+                inp_total += int(result.get("input_tokens") or 0)
+                out_total += int(result.get("output_tokens") or 0)
+        if inp_total == 0 and out_total == 0:
+            return None
+        # gpt-5.2 기준 대략 비용 (입력 $1.75/1M, 출력 $14/1M)
+        cost = (inp_total / 1_000_000) * 1.75 + (out_total / 1_000_000) * 14.0
+        return (inp_total, out_total, cost)
+    except Exception:
+        return None
+
+
+def compute_and_print_cost(usd_krw_rate=None, openai_key=None):
+    """API_USAGE_LOG 기준으로 비용(USD·KRW) 계산 후 출력. openai_key 있으면 이번 달 사용량·잔여 표시."""
+    now = datetime.now()
+    month_key = f"{now.year}-{now.month:02d}"
+    cache = _load_usage_cache()
+    monthly_openai = None
+    if openai_key:
+        monthly_openai = fetch_openai_usage_this_month(openai_key)
+
+    def _parse_budget(env_key):
+        try:
+            b = os.environ.get(env_key)
+            if b:
+                return float(str(b).strip())
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    budgets = {
+        "openai": _parse_budget("OPENAI_MONTHLY_BUDGET"),
+        "grok": _parse_budget("GROK_MONTHLY_BUDGET"),
+        "gemini": _parse_budget("GEMINI_MONTHLY_BUDGET"),
+    }
+
+    if not API_USAGE_LOG and not monthly_openai:
         return
     total_usd = 0.0
     lines = ["\n[API 비용 (추정)]"]
@@ -127,6 +217,11 @@ def compute_and_print_cost(usd_krw_rate=None):
         cost = (inp / 1_000_000) * price_in + (out / 1_000_000) * price_out
         total_usd += cost
         by_provider[provider] = by_provider.get(provider, 0) + cost
+
+    # 이번 실행 누적을 캐시에 저장
+    _merge_usage_to_cache(cache, by_provider)
+    _save_usage_cache(cache)
+
     for prov, c in sorted(by_provider.items()):
         lines.append(f"  {prov}: ${c:.4f}")
     lines.append(f"  **합계: 약 ${total_usd:.4f} USD**")
@@ -138,7 +233,29 @@ def compute_and_print_cost(usd_krw_rate=None):
         if rate and rate > 0:
             total_krw = round(total_usd * rate)
             lines.append(f"  **한국돈: 약 {total_krw:,}원** (환율 {rate}원/USD 기준)")
-    lines.append("  (토큰 수는 API 응답 또는 문자 수 기반 추정. 실제 청구와 다를 수 있음.)")
+
+    # 이번 달 사용량·예상 잔여 (OpenAI, Grok, Gemini)
+    month_data = cache.get(month_key, {})
+    dashboards = {"openai": "https://platform.openai.com/usage", "grok": "https://console.x.ai/team/default/usage", "gemini": "https://aistudio.google.com/usage"}
+    for prov in ["openai", "grok", "gemini"]:
+        cost_est = None
+        inp, out = 0, 0
+        if prov == "openai" and monthly_openai:
+            inp, out, cost_est = monthly_openai
+        elif prov in month_data and (month_data[prov]["cost"] or month_data[prov]["inp"] or month_data[prov]["out"]):
+            d = month_data[prov]
+            inp, out, cost_est = d["inp"], d["out"], d["cost"]
+        if cost_est is not None and cost_est > 0:
+            src = "API" if prov == "openai" and monthly_openai else "스크립트 누적"
+            fmt = "${:.4f}" if cost_est < 0.01 else "${:.2f}"
+            lines.append(f"  [이번 달 {prov} 사용] ~{fmt.format(cost_est)} (입력 {inp:,} / 출력 {out:,} 토큰, {src})")
+            b = budgets.get(prov)
+            if b is not None and b > 0:
+                remain = max(0, b - cost_est)
+                env_key = {"openai": "OPENAI", "grok": "GROK", "gemini": "GEMINI"}[prov] + "_MONTHLY_BUDGET"
+                lines.append(f"  [예상 잔여 {prov}] ~${remain:.2f} ({env_key} ${b:.0f} 기준)")
+    lines.append("  (토큰 수는 API 응답 또는 문자 수 기반 추정. gpt-5.2 reasoning 포함.)")
+    lines.append("  (실제 사용량: OpenAI " + dashboards["openai"] + " | Grok " + dashboards["grok"] + " | Gemini " + dashboards["gemini"] + ")")
     print("\n".join(lines))
 
 def load_prompts_config():
@@ -497,15 +614,20 @@ def generate_report_filename(openai_model=None, grok_model=None, gemini_model=No
     date_str = today.strftime("%Y%m%d")
     time_str = today.strftime("%H%M")
     
+    # 파일명에 사용 불가 문자(/, \, : 등) 제거
+    def _safe_model(s):
+        if not s:
+            return s
+        return s.replace('/', '-').replace('\\', '-').replace(':', '-').replace('*', '-').replace('?', '-').replace('"', '-').replace('<', '-').replace('>', '-').replace('|', '-')
     model_parts = []
     if openai_model:
-        openai_model_clean = openai_model.replace('-', '').replace('_', '')
+        openai_model_clean = _safe_model(openai_model).replace('-', '').replace('_', '')
         model_parts.append(f"openai-{openai_model_clean}")
     if grok_model:
-        grok_model_clean = grok_model.replace('_', '-')
+        grok_model_clean = _safe_model(grok_model).replace('_', '-')
         model_parts.append(f"grok-{grok_model_clean}")
     if gemini_model:
-        gemini_model_clean = gemini_model.replace('_', '-')
+        gemini_model_clean = _safe_model(gemini_model).replace('_', '-')
         model_parts.append(f"gemini-{gemini_model_clean}")
     
     model_suffix = "_".join(model_parts) if model_parts else "3ai"
@@ -632,6 +754,25 @@ OPENAI_RESPONSES_API_MODELS = ("gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-pro", "
 # ---------------------------------------------------------------------------
 API_TEMPERATURE = 0
 
+def _parse_responses_api_usage(result):
+    """Responses API 응답에서 usage 추출. reasoning_tokens 포함 시 청구되는 output 토큰 합산."""
+    # 응답 구조 변형 대응 (usage, usage_metadata, response.usage 등)
+    usage = (
+        result.get("usage")
+        or result.get("usage_metadata")
+        or (result.get("response") or {}).get("usage")
+        or {}
+    )
+    inp = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+    out = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+    # reasoning 모델: reasoning_tokens는 output으로 청구됨 (API에선 별도 필드)
+    out_details = usage.get("output_tokens_details") or {}
+    reasoning = out_details.get("reasoning_tokens") or 0
+    # output_tokens가 이미 reasoning 포함일 수 있음 → reasoning 있으면 별도 합산
+    out_total = int(out) + int(reasoning) if reasoning else int(out)
+    return (int(inp), out_total)
+
+
 def _openai_responses_api(api_key, prompt, model_name, instructions=None, max_retries=3):
     """Responses API(v1/responses)로 호출. input + instructions 사용. (temperature는 API 기본값 사용)"""
     url = "https://api.openai.com/v1/responses"
@@ -656,21 +797,22 @@ def _openai_responses_api(api_key, prompt, model_name, instructions=None, max_re
                 body = {k: v for k, v in body.items() if k != "reasoning"}
                 response = requests.post(url, headers=headers, json=body, timeout=300)
             if response.status_code != 200:
-                return (None, response.status_code, response.text)
+                return (None, response.status_code, response.text, None)
             result = response.json()
+            usage = _parse_responses_api_usage(result)
             # output: [{ "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "..." }] }]
             for item in result.get("output") or []:
                 if item.get("type") == "message" and item.get("role") == "assistant":
                     for c in item.get("content") or []:
                         if c.get("type") == "output_text" and c.get("text"):
-                            return (c["text"], model_name, None)
-            return (None, 200, "output_text not found")
+                            return (c["text"], model_name, None, usage)
+            return (None, 200, "output_text not found", usage)
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
                 time.sleep((attempt + 1) * 2)
                 continue
-            return (None, 0, str(e))
-    return (None, 0, "max_retries")
+            return (None, 0, str(e), None)
+    return (None, 0, "max_retries", None)
 
 def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
     """OpenAI API를 호출합니다. gpt-5.2-pro 계열은 v1/responses, 나머지는 v1/chat/completions."""
@@ -708,9 +850,13 @@ def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
     for model_name in models_to_try:
         # gpt-5.2-pro 계열은 Responses API 사용
         if model_name in OPENAI_RESPONSES_API_MODELS:
-            text, status_or_name, err = _openai_responses_api(api_key, prompt, model_name, instructions=instructions)
+            text, status_or_name, err, usage = _openai_responses_api(api_key, prompt, model_name, instructions=instructions)
             if text is not None:
-                _log_usage("openai", model_name, _estimate_tokens(instructions) + _estimate_tokens(prompt), _estimate_tokens(text))
+                if usage and usage[0] > 0 and usage[1] > 0:
+                    _log_usage("openai", model_name, usage[0], usage[1])
+                else:
+                    # API에서 usage 미제공 시 추정 (reasoning/Thinking 토큰 포함: 출력 ~10배)
+                    _log_usage("openai", model_name, _estimate_tokens(instructions) + _estimate_tokens(prompt), _estimate_tokens(text) * 10)
                 if model_name != models_to_try[0]:
                     print(f"   Fallback 모델 사용: {model_name}")
                 return text, model_name
@@ -761,16 +907,40 @@ def call_openai_api(api_key, prompt, preferred_model=None, system_content=None):
     print("[ERROR] 모든 OpenAI 모델 시도 실패")
     return None, None
 
+def _messages_to_responses_input(messages):
+    """messages = [{"role":"system"|"user"|"assistant", "content":"..."}] 를 Responses API용 instructions + input으로 변환."""
+    instructions = None
+    parts = []
+    for m in messages:
+        role, content = m.get("role"), m.get("content", "")
+        if role == "system":
+            instructions = content
+            continue
+        label = "User" if role == "user" else "Assistant"
+        parts.append(f"{label}: {content}")
+    input_text = "\n\n".join(parts) if parts else ""
+    return instructions or "You are a helpful assistant. Answer based on the conversation.", input_text
+
+
 def call_openai_chat(api_key, messages, preferred_model=None):
-    """OpenAI Chat Completions로 대화 히스토리 전달. messages = [{"role":"system"|"user"|"assistant", "content": "..."}, ...]. 디버그용."""
-    url = "https://api.openai.com/v1/chat/completions"
+    """OpenAI Chat Completions 또는 Responses API로 대화 히스토리 전달. messages = [{"role":"system"|"user"|"assistant", "content": "..."}, ...]. 디버그용."""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+    # gpt-5.2 계열은 Responses API, 나머지는 Chat Completions
+    chat_models = ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+    models = list(chat_models)
     if preferred_model and preferred_model not in models:
         models.insert(0, preferred_model)
+
     for model_name in models:
         try:
-            # temperature=0: 디버그 대화에서도 수치 변동 완화 (API_TEMPERATURE)
+            if model_name in OPENAI_RESPONSES_API_MODELS:
+                instructions, input_text = _messages_to_responses_input(messages)
+                text, _, _, _ = _openai_responses_api(api_key, input_text, model_name, instructions=instructions)
+                if text is not None:
+                    return text, model_name
+                continue
+            # Chat Completions
+            url = "https://api.openai.com/v1/chat/completions"
             r = requests.post(url, headers=headers, json={"model": model_name, "messages": messages, "temperature": API_TEMPERATURE, "max_tokens": 8000}, timeout=120)
             if r.status_code == 200 and r.json().get("choices"):
                 return r.json()["choices"][0]["message"]["content"], model_name
@@ -1871,7 +2041,7 @@ def run_debug_step(openai_key, grok_key, gemini_key, portfolio_prompt, usd_krw_r
             lines.append(f"## {i}\n\n**You:** {user_msg}\n\n**AI:** {ai_reply}\n")
         (qa_dir / "debug_qa.md").write_text("\n".join(lines), encoding="utf-8")
         print(f"[디버그] 대화 기록 저장: report/{date_time_dirname}/debug_qa.md")
-    compute_and_print_cost(usd_krw_rate)
+    compute_and_print_cost(usd_krw_rate, openai_key=openai_key)
     # 지라 저장 여부 묻기: next 또는 n 입력 시 WWI-59에 코멘트로 올림
     if report_path and report_path.exists():
         try:
@@ -2195,7 +2365,7 @@ def main():
     print(f"   Base CAGR(Grok): {alpha_cagr or 'N/A'}% | Base CAGR(Gemini): {beta_cagr or 'N/A'}%")
     print(f"   최종 보고서 크기: {len(final_report)} 문자")
     print(f"   검토 논의 크기: {len(audit_comments)} 문자")
-    compute_and_print_cost(usd_krw_rate)
+    compute_and_print_cost(usd_krw_rate, openai_key=openai_key)
     return 0
 
 if __name__ == "__main__":

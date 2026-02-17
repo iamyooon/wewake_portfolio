@@ -81,6 +81,40 @@ python scripts/tsla_strategy.py
 
 ---
 
+### 3. `discuss_report.py`
+**보고서 기반 Grok·Gemini·OpenAI 대화**
+
+#### 목적
+- 생성된 포트폴리오 보고서(`report/portfolio_report_*.md`)를 입력으로 받아
+- Grok, Gemini, OpenAI와 직접 대화하며 보고서 내용을 논의
+
+#### 사용 방법
+```bash
+# 최신 보고서로 OpenAI와 대화 (기본)
+python scripts/discuss_report.py
+
+# 특정 보고서 지정
+python scripts/discuss_report.py --report report/portfolio_report_20260206_1019_*.md
+
+# Grok로 시작
+python scripts/discuss_report.py --ai grok
+
+# Gemini로 시작
+python scripts/discuss_report.py --ai gemini
+```
+
+#### 대화 중 명령
+- `g` 또는 `grok` → Grok로 전환
+- `o` 또는 `openai` → OpenAI로 전환
+- `gemini` → Gemini로 전환
+- `quit` 또는 `exit` → 종료
+
+#### 요구사항
+- `.env`에 `OPENAI_API_KEY`, `GROK_API_KEY`, `GEMINI_API_KEY` 설정
+- `generate_portfolio_report_3ai.py` 스크립트와 동일
+
+---
+
 ## 🔧 요구사항
 
 - Python 3.7 이상

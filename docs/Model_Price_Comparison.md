@@ -61,6 +61,13 @@
 - **합계(대략):** **약 $0.85/회** (gpt-5.2 사용 시).  
 - 동일 토큰에 **gpt-5.2-pro** 사용 시 Step3만 약 **$8~10** 수준으로 증가 가능.
 
+### ⚠️ gpt-5.2 Reasoning(Thinking) 토큰 주의
+
+- gpt-5.2는 **reasoning_effort: medium**으로 내부 "Thinking" 토큰을 생성함.
+- **Reasoning 토큰은 output으로 청구**되나, 응답 텍스트에 포함되지 않음.
+- 스크립트가 과거에는 **가시적 출력만**으로 추정해 **실제 비용의 1/10 수준**으로 과소 추정했음.
+- **실제 검증:** [OpenAI Usage](https://platform.openai.com/usage)에서 일별·모델별 사용량 확인 권장.
+
 ---
 
 ## 4-2. 기존 구조 vs 2라운드 협의 구조 비용 차이 (예측)

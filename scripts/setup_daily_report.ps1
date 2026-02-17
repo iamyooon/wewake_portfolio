@@ -17,9 +17,9 @@ if ($existingTask) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-# Create task action
-$action = New-ScheduledTaskAction -Execute "PowerShell.exe" `
-    -Argument "-ExecutionPolicy Bypass -File `"$ScriptPath`" -ProjectPath `"$ProjectPath`""
+# Create task action (chcp 65001으로 UTF-8 설정 후 PowerShell 실행 → 한글 로그 정상 표시)
+$action = New-ScheduledTaskAction -Execute "cmd.exe" `
+    -Argument "/c chcp 65001 >nul && powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ProjectPath `"$ProjectPath`""
 
 # Create trigger (daily at 8:00 AM)
 $trigger = New-ScheduledTaskTrigger -Daily -At "08:00"

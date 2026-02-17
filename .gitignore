@@ -13,6 +13,7 @@ node_modules/
 
 # Reports (자동 생성 파일)
 report_prompt_*.txt
+report/.usage_cache.json
 
 # Logs
 *.log
